@@ -1,0 +1,24 @@
+plan/
+
+# macOS
+.DS_Store
+
+# local environment
+.env
+.env.*
+*.log
+tmp/
+temp/
+bin/
+dist/
+coverage.out
+
+# editors
+.vscode/
+.idea/
+
+# secrets
+*.pem
+*.key
+*.p12
+*.pfx
