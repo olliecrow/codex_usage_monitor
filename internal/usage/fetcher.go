@@ -28,7 +28,6 @@ type accountFetcher struct {
 }
 
 type accountFetchResult struct {
-	index               int
 	account             AccountSummary
 	snapshot            *Summary
 	fetchErr            error
@@ -421,16 +420,15 @@ func (f *Fetcher) fetchAccountsConcurrent(ctx context.Context, now time.Time) []
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = f.fetchAccountResult(ctx, account, now, i)
+			results[i] = f.fetchAccountResult(ctx, account, now)
 		}()
 	}
 	wg.Wait()
 	return results
 }
 
-func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher, now time.Time, index int) accountFetchResult {
+func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher, now time.Time) accountFetchResult {
 	result := accountFetchResult{
-		index: index,
 		account: AccountSummary{
 			Label: account.account.Label,
 		},

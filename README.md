@@ -23,9 +23,10 @@ This project is focused on subscription usage only. It does not track API usage.
 - Falls back to OAuth usage endpoint if app-server is unavailable.
 - Estimates observed token usage totals for the last five hours and last week from local `token_count` events.
 - Shows observed token estimates aggregated across detected accounts (with duplicate-identity deduplication safeguards).
+- Keeps the TUI compact: only aggregate token totals are shown in the bottom panel.
 - In multi-account mode, labels which account the top window cards represent.
 - Includes a doctor command to check local setup and data source health.
-- Shows account identity metadata when available, for example account email.
+- Shows account identity metadata in snapshot/json output when available, for example account email.
 - Detects auth-file changes and refreshes app-server session so sign-out/sign-in switches are picked up.
 
 ## Design goals
@@ -105,4 +106,5 @@ You can override the file path with `CODEX_USAGE_MONITOR_ACCOUNTS_FILE`.
   - `unavailable` when no account estimate is available
 - If observed-token estimation fails for an account, that account is marked `unavailable` and the monitor continues with the other available accounts.
 - Observed tokens are summed across detected accounts for the five-hour and weekly windows.
+- Duplicate account identities are merged internally during token aggregation and this is not surfaced as a UI warning.
 - `/status` text parsing is intentionally not used.

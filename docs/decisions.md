@@ -153,6 +153,7 @@ Enforcement:
 - Keep showing aggregate totals from available accounts when one account is unavailable.
 - Present one aggregate observed-token total across accounts in UI output.
 - Deduplicate duplicate account identities using max-observed merge before aggregate summation.
+- Keep duplicate-identity deduplication silent in TUI output to avoid unnecessary operator noise.
 
 Decision:
 Top-level window cards should prioritize risk visibility in multi-account mode.
@@ -224,7 +225,7 @@ Trade-offs:
 App-server fetch adds one extra lightweight account-read call and an auth-fingerprint check per refresh.
 Enforcement:
 - Include account identity fields in normalized output when available.
-- Display account identity metadata in snapshot output and TUI metadata panel.
+- Display account identity metadata in snapshot output.
 - Detect auth-file token changes and restart app-server session automatically.
 
 Decision:
@@ -238,6 +239,7 @@ No manual refresh hotkey in TUI mode.
 Enforcement:
 - TUI refreshes on interval only.
 - Exit flow uses `Ctrl+C`.
+- TUI bottom panel defaults to compact aggregate token totals across accounts, not per-account token breakdown sections.
 - UI labels use `resets in` for countdown clarity.
 
 Decision:
