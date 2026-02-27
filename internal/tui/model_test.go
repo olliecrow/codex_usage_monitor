@@ -43,24 +43,12 @@ func TestViewFitsViewportAcrossSizes(t *testing.T) {
 	}
 }
 
-func TestPercentBarBounds(t *testing.T) {
-	cases := []int{-20, 0, 17, 50, 99, 100, 120}
-	for _, percent := range cases {
-		bar := percentBar(percent, 20)
-		if !strings.HasPrefix(bar, "[") || !strings.HasSuffix(bar, "]") {
-			t.Fatalf("unexpected bar format: %q", bar)
-		}
-		if lipgloss.Width(bar) != 22 {
-			t.Fatalf("unexpected bar width: got %d", lipgloss.Width(bar))
-		}
-	}
-}
-
 func TestNarrowViewStillRendersCoreFields(t *testing.T) {
 	m := seededModel()
 	m.width = 42
 	m.height = 14
 	out := m.View()
+	t.Log(out)
 	if !strings.Contains(out, "five-hour window") {
 		t.Fatalf("expected five-hour section in output")
 	}
@@ -71,8 +59,8 @@ func TestNarrowViewStillRendersCoreFields(t *testing.T) {
 
 func TestViewRendersAggregatedTokenSection(t *testing.T) {
 	m := seededModel()
-	m.width = 100
-	m.height = 26
+	m.width = 140
+	m.height = 40
 	total5h := int64(120000)
 	total1w := int64(450000)
 	m.summary.ObservedTokensStatus = "estimated"
@@ -93,14 +81,176 @@ func TestViewRendersAggregatedTokenSection(t *testing.T) {
 		HasSplit:    true,
 	}
 	out := m.View()
-	if !strings.Contains(out, "five-hour tokens (sum across accounts):") {
+	if !strings.Contains(out, "five-hour tokens [ready] (sum across accounts):") {
 		t.Fatalf("expected aggregated five-hour token line in output")
 	}
-	if !strings.Contains(out, "weekly tokens (sum across accounts):") {
+	if !strings.Contains(out, "weekly tokens [ready] (sum across accounts):") {
 		t.Fatalf("expected aggregated weekly token line in output")
 	}
-	if strings.Contains(out, "estimated: ") {
-		t.Fatalf("expected totals-only token display without split lines")
+	if !strings.Contains(out, "- total: 120k") {
+		t.Fatalf("expected five-hour total bullet line")
+	}
+	if !strings.Contains(out, "- input: 100k") {
+		t.Fatalf("expected five-hour input bullet line")
+	}
+	if !strings.Contains(out, "- output (reasoning): 0") {
+		t.Fatalf("expected five-hour output(reasoning) bullet line")
+	}
+	if !strings.Contains(out, "- input (cached): 90k") {
+		t.Fatalf("expected five-hour input(cached) bullet line")
+	}
+}
+
+func TestWindowTitlesShowAccountEmailAndMetaOmitsCurrentAccountLine(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 30
+	out := m.View()
+	if !strings.Contains(out, "five-hour window [me@example.com]") {
+		t.Fatalf("expected five-hour title to include account email")
+	}
+	if !strings.Contains(out, "weekly window [me@example.com]") {
+		t.Fatalf("expected weekly title to include account email")
+	}
+	if strings.Contains(out, "current account:") {
+		t.Fatalf("did not expect current account line in bottom metadata panel")
+	}
+}
+
+func TestWindowPanelsShowUnavailableWhenActiveWindowDataMissing(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 28
+	m.summary.WindowDataAvailable = false
+	m.summary.AccountEmail = ""
+	out := m.View()
+	if !strings.Contains(out, "five-hour window [unavailable]") {
+		t.Fatalf("expected unavailable marker in five-hour title")
+	}
+	if !strings.Contains(out, "used: unavailable") {
+		t.Fatalf("expected unavailable used value")
+	}
+}
+
+func TestAccountsLineShowsDetectedAndIdentifiers(t *testing.T) {
+	m := seededModel()
+	m.width = 140
+	m.height = 28
+	m.summary.TotalAccounts = 3
+	m.summary.Accounts = []usage.AccountSummary{
+		{AccountEmail: "a@example.com"},
+		{AccountID: "acc-123"},
+		{},
+	}
+
+	out := m.View()
+	if !strings.Contains(out, "accounts: 3 detected [a@example.com, account_id:acc-123, unidentified]") {
+		t.Fatalf("expected detected-account identity list in accounts line, got:\n%s", out)
+	}
+}
+
+func TestAccountsLineTruncatesWithDots(t *testing.T) {
+	m := seededModel()
+	m.width = 64
+	m.height = 20
+	m.summary.TotalAccounts = 2
+	m.summary.Accounts = []usage.AccountSummary{
+		{AccountEmail: "very.long.first.account@example.com"},
+		{AccountEmail: "very.long.second.account@example.com"},
+	}
+
+	out := m.View()
+	if !strings.Contains(out, "accounts: ") {
+		t.Fatalf("expected accounts line in output")
+	}
+	if !strings.Contains(out, "...") {
+		t.Fatalf("expected accounts line truncation with three dots")
+	}
+}
+
+func TestTokenBreakdownLinesStayFixedWithNAPlaceholders(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 26
+	m.summary.ObservedWindow5h = nil
+	m.summary.ObservedTokens5h = nil
+	m.summary.ObservedWindowWeekly = nil
+	m.summary.ObservedTokensWeekly = nil
+
+	out := m.View()
+	for _, expected := range []string{
+		"- total: n/a",
+		"- input: n/a",
+		"- input (cached): n/a",
+		"- output: n/a",
+		"- output (reasoning): n/a",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected fixed placeholder token line %q", expected)
+		}
+	}
+}
+
+func TestStatusSectionFixedRowsAcrossCounts(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 30
+	m.summary.Warnings = nil
+	base := m.View()
+	baseStatusLines := countStatusRows(base)
+	if baseStatusLines != statusRowsForViewport(m.height) {
+		t.Fatalf("expected fixed status rows for viewport")
+	}
+
+	m.summary.Warnings = []string{
+		"first warning",
+		"second warning",
+		"third warning",
+		"fourth warning",
+		"fifth warning",
+	}
+	withWarnings := m.View()
+	withStatusLines := countStatusRows(withWarnings)
+	if withStatusLines != baseStatusLines {
+		t.Fatalf("expected status section row count to remain fixed")
+	}
+	if !strings.Contains(withWarnings, "warning [more checks]: +2 hidden") {
+		t.Fatalf("expected hidden-check overflow indicator in fixed status section")
+	}
+	if !strings.Contains(withWarnings, "status [active windows]:") {
+		t.Fatalf("expected descriptive status check labels")
+	}
+}
+
+func TestObservedHeaderShowsLoadingWhenUnavailableAndFetching(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 24
+	m.fetching = true
+	m.summary.ObservedWindow5h = nil
+	m.summary.ObservedTokens5h = nil
+	out := m.View()
+	if !strings.Contains(out, "five-hour tokens [loading") {
+		t.Fatalf("expected loading state in five-hour token header when unavailable and fetching")
+	}
+	if strings.Contains(out, "[loading -") || strings.Contains(out, "[refreshing -") {
+		t.Fatalf("did not expect spinner dash in loading/refreshing state")
+	}
+}
+
+func TestObservedHeaderShowsLoadingWhenWarmingWithoutFetchInFlight(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 24
+	m.fetching = false
+	m.summary.ObservedWindow5h = nil
+	m.summary.ObservedTokens5h = nil
+	m.summary.ObservedTokensStatus = "unavailable"
+	m.summary.ObservedTokensWarming = true
+
+	out := m.View()
+	if !strings.Contains(out, "five-hour tokens [loading] (sum across accounts):") {
+		t.Fatalf("expected loading state from explicit warming flag")
 	}
 }
 
@@ -247,6 +397,16 @@ func nthRuneIndex(runes []rune, target rune, n int) int {
 	return -1
 }
 
+func countStatusRows(s string) int {
+	count := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "warning [") || strings.Contains(line, "status [") || strings.Contains(line, "error [") {
+			count++
+		}
+	}
+	return count
+}
+
 func seededModel() Model {
 	now := time.Date(2026, 2, 26, 15, 0, 0, 0, time.UTC)
 	reset1 := now.Add(90 * time.Minute)
@@ -268,9 +428,10 @@ func seededModel() Model {
 	m.lastFetchDuration = 420 * time.Millisecond
 	m.nextFetchAt = now.Add(13 * time.Second)
 	m.summary = &usage.Summary{
-		Source:       "app-server",
-		PlanType:     "pro",
-		AccountEmail: "me@example.com",
+		Source:              "app-server",
+		PlanType:            "pro",
+		AccountEmail:        "me@example.com",
+		WindowDataAvailable: true,
 		PrimaryWindow: usage.WindowSummary{
 			UsedPercent:       41,
 			ResetsAt:          &reset1,

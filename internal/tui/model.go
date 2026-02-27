@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -240,49 +239,60 @@ func (m Model) renderBody() string {
 	rightPanelWidth := contentWidth
 
 	var windowsBlock string
+	fiveHourTitle := "five-hour window"
+	weeklyTitle := "weekly window"
+	if m.summary.AccountEmail != "" {
+		fiveHourTitle += " [" + m.summary.AccountEmail + "]"
+		weeklyTitle += " [" + m.summary.AccountEmail + "]"
+	} else if !m.summary.WindowDataAvailable {
+		fiveHourTitle += " [unavailable]"
+		weeklyTitle += " [unavailable]"
+	}
 	if contentWidth >= 94 {
 		panelOverhead := horizontalOverhead(m.styles.panel)
 		panelWidth, spacerWidth := splitEqualPanelContentWidths(contentWidth, panelOverhead)
 		spacer := strings.Repeat(" ", spacerWidth)
 		leftPanelWidth = panelWidth
 		rightPanelWidth = panelWidth
-		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
-		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
+		leftPanel := m.renderWindowPanel(fiveHourTitle, m.summary.PrimaryWindow, leftPanelWidth, m.summary.WindowDataAvailable)
+		rightPanel := m.renderWindowPanel(weeklyTitle, m.summary.SecondaryWindow, rightPanelWidth, m.summary.WindowDataAvailable)
 		windowsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, spacer, rightPanel)
 	} else {
-		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
-		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
+		leftPanel := m.renderWindowPanel(fiveHourTitle, m.summary.PrimaryWindow, leftPanelWidth, m.summary.WindowDataAvailable)
+		rightPanel := m.renderWindowPanel(weeklyTitle, m.summary.SecondaryWindow, rightPanelWidth, m.summary.WindowDataAvailable)
 		windowsBlock = lipgloss.JoinVertical(lipgloss.Left, leftPanel, "", rightPanel)
 	}
 
 	metaLines := []string{}
-	if m.summary.TotalAccounts > 0 {
-		metaLines = append(metaLines, m.styles.label.Render("accounts: ")+m.styles.value.Render(fmt.Sprintf("%d detected, %d reachable", m.summary.TotalAccounts, m.summary.SuccessfulAccounts)))
-	}
-	if m.summary.AccountEmail != "" {
-		metaLines = append(metaLines, m.styles.label.Render("current account: ")+m.styles.value.Render(m.summary.AccountEmail))
-	}
-	if m.summary.ObservedTokensStatus != "" {
-		metaLines = append(metaLines, m.styles.label.Render("five-hour tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)))
-		metaLines = append(metaLines, m.styles.label.Render("weekly tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)))
-	}
-	if len(m.summary.Warnings) > 0 {
-		for _, w := range m.summary.Warnings {
-			metaLines = append(metaLines, m.styles.warn.Render("warning: "+w))
-		}
-	}
-	if m.lastError != "" {
-		metaLines = append(metaLines, m.styles.error.Render("last error: "+m.lastError))
-	}
+	maxMetaWidth := max(8, contentWidth-4)
+	metaLines = append(metaLines, m.renderAccountsLine(maxMetaWidth))
+	metaLines = append(metaLines, m.renderObservedHeaderLine("five-hour tokens", m.summary.ObservedWindow5h, m.summary.ObservedTokens5h))
+	metaLines = append(metaLines, m.renderObservedBreakdownLinesFixed(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)...)
+	metaLines = append(metaLines, m.renderObservedHeaderLine("weekly tokens", m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly))
+	metaLines = append(metaLines, m.renderObservedBreakdownLinesFixed(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)...)
+	metaLines = append(metaLines, m.renderStatusLinesFixed(statusRowsForViewport(m.height))...)
 	for i := range metaLines {
-		metaLines[i] = truncateRunes(metaLines[i], max(8, contentWidth-4))
+		metaLines[i] = ansi.Truncate(metaLines[i], maxMetaWidth, "...")
 	}
 
 	metaPanel := m.styles.panel.Width(contentWidth).Render(strings.Join(metaLines, "\n"))
 	return lipgloss.JoinVertical(lipgloss.Left, windowsBlock, metaPanel)
 }
 
-func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth int) string {
+func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth int, available bool) string {
+	if !available {
+		lines := []string{
+			m.styles.accent.Render(title),
+			m.styles.label.Render("used: ") + m.styles.bad.Render("unavailable"),
+			m.styles.label.Render("resets at: ") + m.styles.value.Render("unavailable"),
+			m.styles.label.Render("resets in: ") + m.styles.value.Render("unavailable"),
+		}
+		for i := range lines {
+			lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
+		}
+		return m.styles.panel.Width(max(20, maxWidth)).Render(strings.Join(lines, "\n"))
+	}
+
 	statusStyle := percentStyle(win.UsedPercent, m.styles)
 
 	reset := "unknown"
@@ -304,7 +314,234 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 		m.styles.label.Render("resets at: ") + m.styles.value.Render(reset),
 		m.styles.label.Render("resets in: ") + m.styles.value.Render(remaining),
 	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
+	}
 	return m.styles.panel.Width(max(20, maxWidth)).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderAccountsLine(maxWidth int) string {
+	detected := m.summary.TotalAccounts
+	if detected <= 0 {
+		detected = len(m.summary.Accounts)
+	}
+	identities := summarizeAccountIdentities(m.summary.Accounts)
+	value := fmt.Sprintf("%d detected [%s]", detected, strings.Join(identities, ", "))
+	line := m.styles.label.Render("accounts: ") + m.styles.value.Render(value)
+	return ansi.Truncate(line, maxWidth, "...")
+}
+
+func (m Model) renderObservedHeaderLine(windowLabel string, win *usage.ObservedTokenBreakdown, fallbackTotal *int64) string {
+	state, style := m.observedHeaderState(win, fallbackTotal)
+	return m.styles.label.Render(windowLabel+" ") + style.Render("["+state+"]") + m.styles.label.Render(" (sum across accounts):")
+}
+
+func (m Model) observedHeaderState(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) (string, lipgloss.Style) {
+	state := "n/a"
+	style := m.styles.warn
+	observedStatus := strings.ToLower(strings.TrimSpace(m.summary.ObservedTokensStatus))
+	warming := m.summary.ObservedTokensWarming
+	if m.fetching && win == nil && fallbackTotal == nil {
+		state = "loading"
+		style = m.styles.loading
+	} else if win != nil || fallbackTotal != nil {
+		if m.fetching {
+			state = "refreshing"
+			style = m.styles.loading
+		} else {
+			state = "ready"
+			style = m.styles.ok
+		}
+	} else if warming {
+		state = "loading"
+		style = m.styles.loading
+	} else if observedStatus == "partial" {
+		state = "partial"
+		style = m.styles.warn
+	} else if observedStatus == "unavailable" {
+		state = "unavailable"
+		style = m.styles.warn
+	}
+	return state, style
+}
+
+func summarizeAccountIdentities(accounts []usage.AccountSummary) []string {
+	if len(accounts) == 0 {
+		return []string{"none"}
+	}
+	out := make([]string, 0, len(accounts))
+	seen := map[string]struct{}{}
+	for _, account := range accounts {
+		identity := "unidentified"
+		if email := strings.TrimSpace(account.AccountEmail); email != "" {
+			identity = email
+		} else if accountID := strings.TrimSpace(account.AccountID); accountID != "" {
+			identity = "account_id:" + accountID
+		} else if userID := strings.TrimSpace(account.UserID); userID != "" {
+			identity = "user_id:" + userID
+		}
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+		out = append(out, identity)
+	}
+	if len(out) == 0 {
+		return []string{"none"}
+	}
+	return out
+}
+
+func (m Model) renderObservedBreakdownLinesFixed(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) []string {
+	total := "n/a"
+	input := "n/a"
+	cachedInput := "n/a"
+	output := "n/a"
+	reasoningOutput := "n/a"
+
+	if win != nil {
+		total = compactCount(win.Total)
+		if win.HasSplit {
+			input = compactCount(win.Input)
+			cachedInput = compactCount(win.CachedInput)
+			output = compactCount(win.Output)
+			reasoningOutput = compactCount(win.ReasoningOutput)
+		}
+	} else if fallbackTotal != nil {
+		total = compactCount(*fallbackTotal)
+	}
+
+	lines := []string{
+		m.styles.dim.Render("- total: " + total),
+		m.styles.dim.Render("- input: " + input),
+		m.styles.dim.Render("- input (cached): " + cachedInput),
+		m.styles.dim.Render("- output: " + output),
+		m.styles.dim.Render("- output (reasoning): " + reasoningOutput),
+	}
+	return lines
+}
+
+type statusLine struct {
+	level string
+	name  string
+	value string
+}
+
+func (m Model) renderStatusLinesFixed(rows int) []string {
+	if rows < 1 {
+		rows = 1
+	}
+	checks := []statusLine{
+		m.activeWindowsStatusLine(),
+		m.observedStatusLine("five-hour token estimate", m.summary.ObservedWindow5h, m.summary.ObservedTokens5h),
+		m.observedStatusLine("weekly token estimate", m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly),
+		m.diagnosticsStatusLine(),
+	}
+
+	selected := checks
+	if rows < len(checks) {
+		if rows == 1 {
+			selected = []statusLine{{
+				level: "warning",
+				name:  "more checks",
+				value: fmt.Sprintf("+%d hidden", len(checks)-1),
+			}}
+		} else {
+			selected = append([]statusLine{}, checks[:rows-1]...)
+			selected = append(selected, statusLine{
+				level: "warning",
+				name:  "more checks",
+				value: fmt.Sprintf("+%d hidden", len(checks)-(rows-1)),
+			})
+		}
+	}
+
+	out := make([]string, 0, len(selected))
+	for _, line := range selected {
+		rendered := fmt.Sprintf("%s [%s]: %s", line.level, line.name, line.value)
+		switch line.level {
+		case "error":
+			out = append(out, m.styles.error.Render(rendered))
+		case "warning":
+			out = append(out, m.styles.warn.Render(rendered))
+		default:
+			out = append(out, m.styles.ok.Render(rendered))
+		}
+	}
+	return out
+}
+
+func (m Model) activeWindowsStatusLine() statusLine {
+	if !m.summary.WindowDataAvailable {
+		if m.fetching {
+			return statusLine{level: "status", name: "active windows", value: "loading"}
+		}
+		return statusLine{level: "warning", name: "active windows", value: "unavailable"}
+	}
+	if m.fetching {
+		return statusLine{level: "status", name: "active windows", value: "refreshing"}
+	}
+	return statusLine{level: "status", name: "active windows", value: "ok"}
+}
+
+func (m Model) observedStatusLine(name string, win *usage.ObservedTokenBreakdown, fallbackTotal *int64) statusLine {
+	state, _ := m.observedHeaderState(win, fallbackTotal)
+	if state == "loading" || state == "refreshing" {
+		return statusLine{level: "status", name: name, value: state}
+	}
+	if state == "n/a" || state == "unavailable" {
+		return statusLine{level: "warning", name: name, value: "unavailable"}
+	}
+	if state == "partial" || strings.EqualFold(strings.TrimSpace(m.summary.ObservedTokensStatus), "partial") {
+		return statusLine{level: "warning", name: name, value: "partial"}
+	}
+	return statusLine{level: "status", name: name, value: state}
+}
+
+func (m Model) diagnosticsStatusLine() statusLine {
+	if trimmed := strings.TrimSpace(m.lastError); trimmed != "" {
+		return statusLine{level: "error", name: "source + diagnostics", value: trimmed}
+	}
+
+	warnings := make([]string, 0, len(m.summary.Warnings))
+	seen := map[string]struct{}{}
+	for _, warning := range m.summary.Warnings {
+		trimmed := strings.TrimSpace(warning)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		warnings = append(warnings, trimmed)
+	}
+	if len(warnings) > 0 {
+		value := warnings[0]
+		if len(warnings) > 1 {
+			value = fmt.Sprintf("%s (+%d more)", warnings[0], len(warnings)-1)
+		}
+		return statusLine{level: "warning", name: "source + diagnostics", value: value}
+	}
+
+	source := strings.TrimSpace(m.summary.Source)
+	if source == "" {
+		source = "ok"
+	}
+	return statusLine{level: "status", name: "source + diagnostics", value: source}
+}
+
+func statusRowsForViewport(height int) int {
+	switch {
+	case height >= 40:
+		return 4
+	case height >= 30:
+		return 3
+	case height >= 22:
+		return 2
+	default:
+		return 1
+	}
 }
 
 func percentStyle(percent int, styles styles) lipgloss.Style {
@@ -316,36 +553,6 @@ func percentStyle(percent int, styles styles) lipgloss.Style {
 	default:
 		return styles.ok
 	}
-}
-
-func percentBar(percent int, width int) string {
-	if width < 4 {
-		width = 4
-	}
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
-	filled := int(math.Round(float64(percent) * float64(width) / 100.0))
-	if filled < 0 {
-		filled = 0
-	}
-	if filled > width {
-		filled = width
-	}
-	return "[" + strings.Repeat("=", filled) + strings.Repeat(".", width-filled) + "]"
-}
-
-func formatObservedWindowCompact(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) string {
-	if win == nil {
-		if fallbackTotal == nil {
-			return "n/a"
-		}
-		return compactCount(*fallbackTotal)
-	}
-	return compactCount(win.Total)
 }
 
 func compactCount(v int64) string {
@@ -364,7 +571,20 @@ func compactCount(v int64) string {
 		value /= 1000
 		unitIndex++
 	}
-	return fmt.Sprintf("%s%d%s", sign, int(math.Round(value)), units[unitIndex])
+	decimals := 0
+	switch {
+	case value >= 100:
+		decimals = 0
+	case value >= 10:
+		decimals = 1
+	default:
+		decimals = 2
+	}
+	formatted := fmt.Sprintf("%.*f", decimals, value)
+	if decimals > 0 {
+		formatted = strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+	}
+	return fmt.Sprintf("%s%s%s", sign, formatted, units[unitIndex])
 }
 
 func pollCmd(interval time.Duration) tea.Cmd {
