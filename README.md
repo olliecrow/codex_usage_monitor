@@ -5,6 +5,10 @@ Simple terminal usage monitor for Codex subscription limits.
 <img width="735" height="402" alt="image" src="https://github.com/user-attachments/assets/4dd95d07-f222-4b3b-9bec-69a2f9c3c172" />
 
 
+## Current status
+
+This project is actively maintained and supports ongoing multi-account improvements.
+
 ## Goal
 
 Show how much Codex subscription usage is left for:
@@ -36,6 +40,12 @@ This project is focused on subscription usage only. It does not track API usage.
 - resilient to terminal resize
 - no fragile parsing where possible
 - no secrets in code, docs, or history
+
+## Requirements
+
+- Go `1.24+`
+- Local Codex account data on disk (for usage source and observed-token estimation)
+- Network access for live usage endpoints
 
 ## Quick start
 
