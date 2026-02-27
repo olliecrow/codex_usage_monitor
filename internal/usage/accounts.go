@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	defaultAccountsRelativePath = ".codex-usage-monitor/accounts.json"
-	accountsFileEnvVar          = "CODEX_USAGE_MONITOR_ACCOUNTS_FILE"
+	defaultMonitorDirName   = "codex-usage-monitor"
+	legacyMonitorDirName    = ".codex-usage-monitor"
+	defaultAccountsFileName = "accounts.json"
+	accountsFileEnvVar      = "CODEX_USAGE_MONITOR_ACCOUNTS_FILE"
 )
 
 type accountFile struct {
@@ -307,11 +309,40 @@ func resolveAccountsFilePath() (string, error) {
 	if explicit := strings.TrimSpace(os.Getenv(accountsFileEnvVar)); explicit != "" {
 		return expandPath(explicit)
 	}
+	dir, err := monitorDataDir()
+	if err != nil {
+		return "", err
+	}
+	defaultPath := filepath.Join(dir, defaultAccountsFileName)
+	if fileExists(defaultPath) {
+		return defaultPath, nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, defaultAccountsRelativePath), nil
+	legacyPath := filepath.Join(home, legacyMonitorDirName, defaultAccountsFileName)
+	if fileExists(legacyPath) {
+		return legacyPath, nil
+	}
+	return defaultPath, nil
+}
+
+func monitorDataDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, defaultMonitorDirName), nil
+}
+
+func EnsureMonitorDataDir() error {
+	dir, err := monitorDataDir()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0o700)
 }
 
 func defaultCodexHome() (string, error) {

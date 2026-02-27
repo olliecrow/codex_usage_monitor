@@ -114,6 +114,10 @@ func (f fakeEstimator) Estimate(codexHome string, _ time.Time) (ObservedTokenEst
 }
 
 func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "/b")
+
 	primaryA := &fakeSource{name: "primary-a", out: &Summary{
 		Source:          "app-server",
 		PlanType:        "pro",
@@ -187,11 +191,14 @@ func TestFetcherAggregatesMultiAccountObservedTokens(t *testing.T) {
 	if out.Accounts[1].ObservedTokens5h == nil || *out.Accounts[1].ObservedTokens5h != 30 {
 		t.Fatalf("expected account b observed 5h total")
 	}
+	if !out.WindowDataAvailable {
+		t.Fatalf("expected active account window data to be available")
+	}
 	if out.SecondaryWindow.UsedPercent != 70 {
-		t.Fatalf("expected top window summary from highest-pressure account")
+		t.Fatalf("expected top window summary from active account")
 	}
 	if out.WindowAccountLabel != "b" {
-		t.Fatalf("expected window account label b, got %q", out.WindowAccountLabel)
+		t.Fatalf("expected active window account label b, got %q", out.WindowAccountLabel)
 	}
 }
 
@@ -267,6 +274,44 @@ func TestFetcherMarksObservedPartialWhenSomeAccountsUnavailable(t *testing.T) {
 	}
 	if out.ObservedTokens5h == nil || *out.ObservedTokens5h != 10 {
 		t.Fatalf("expected partial observed 5h total from available accounts")
+	}
+}
+
+func TestFetcherMarksObservedWarmingWhenUnavailableEstimateIsWarming(t *testing.T) {
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account: MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary: &fakeSource{name: "primary-a", out: &Summary{
+					PrimaryWindow:   WindowSummary{UsedPercent: 10},
+					SecondaryWindow: WindowSummary{UsedPercent: 20},
+				}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {
+					Status:  observedTokensStatusUnavailable,
+					Warming: true,
+					Note:    "warming token estimate",
+				},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ObservedTokensStatus != observedTokensStatusUnavailable {
+		t.Fatalf("expected unavailable observed status, got %q", out.ObservedTokensStatus)
+	}
+	if !out.ObservedTokensWarming {
+		t.Fatalf("expected warming flag when unavailable estimate is warming")
+	}
+	if len(out.Accounts) != 1 || !out.Accounts[0].ObservedTokensWarming {
+		t.Fatalf("expected per-account warming flag to be set")
 	}
 }
 
@@ -454,6 +499,56 @@ func TestFetcherDeduplicatesByAccountIDWhenEmailMissing(t *testing.T) {
 	}
 }
 
+func TestFetcherMergesUnverifiedAccountsIntoSingleIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "/a")
+
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account: MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary: &fakeSource{name: "primary-a", out: &Summary{
+					PrimaryWindow:   WindowSummary{UsedPercent: 10},
+					SecondaryWindow: WindowSummary{UsedPercent: 20},
+				}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account: MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary: &fakeSource{name: "primary-b", out: &Summary{
+					PrimaryWindow:   WindowSummary{UsedPercent: 30},
+					SecondaryWindow: WindowSummary{UsedPercent: 40},
+				}},
+				fallback: &fakeSource{name: "fallback-b"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {Window5h: ObservedTokenBreakdown{Total: 100}, WindowWeekly: ObservedTokenBreakdown{Total: 200}, Status: observedTokensStatusEstimated},
+				"/b": {Window5h: ObservedTokenBreakdown{Total: 150}, WindowWeekly: ObservedTokenBreakdown{Total: 180}, Status: observedTokensStatusEstimated},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.TotalAccounts != 1 || out.SuccessfulAccounts != 1 {
+		t.Fatalf("expected unverified accounts merged to one identity, got %d/%d", out.SuccessfulAccounts, out.TotalAccounts)
+	}
+	if len(out.Accounts) != 1 {
+		t.Fatalf("expected one account row after unverified merge, got %d", len(out.Accounts))
+	}
+	if out.ObservedTokens5h == nil || *out.ObservedTokens5h != 150 {
+		t.Fatalf("expected merged unverified observed 5h max total, got %+v", out.ObservedTokens5h)
+	}
+	if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != 200 {
+		t.Fatalf("expected merged unverified observed weekly max total, got %+v", out.ObservedTokensWeekly)
+	}
+}
+
 func TestFetcherUsesActiveHomeIdentityForCurrentAccount(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -495,7 +590,7 @@ func TestFetcherUsesActiveHomeIdentityForCurrentAccount(t *testing.T) {
 	}
 }
 
-func TestFetcherFallsBackToHighestPressureWhenActiveFetchFails(t *testing.T) {
+func TestFetcherMarksWindowUnavailableWhenActiveFetchFails(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/b")
@@ -525,11 +620,17 @@ func TestFetcherFallsBackToHighestPressureWhenActiveFetchFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.AccountEmail != "a@example.com" {
-		t.Fatalf("expected fallback current account identity from successful summary, got %q", out.AccountEmail)
+	if out.WindowDataAvailable {
+		t.Fatalf("expected active window data to be unavailable")
 	}
-	if out.WindowAccountLabel != "a" {
-		t.Fatalf("expected window account label from highest-pressure successful account, got %q", out.WindowAccountLabel)
+	if out.AccountEmail != "" {
+		t.Fatalf("expected no current account identity when active account failed, got %q", out.AccountEmail)
+	}
+	if out.WindowAccountLabel != "" {
+		t.Fatalf("expected no window account label when active account failed, got %q", out.WindowAccountLabel)
+	}
+	if !strings.Contains(strings.Join(out.Warnings, " | "), "window cards are unavailable") {
+		t.Fatalf("expected warning about unavailable window cards")
 	}
 }
 
@@ -583,7 +684,7 @@ func TestFetcherUpdatesWindowCardsWhenActiveHomeSwitches(t *testing.T) {
 	}
 }
 
-func TestFetcherFallsBackToHighestPressureWhenActiveHomeMissing(t *testing.T) {
+func TestFetcherMarksWindowUnavailableWhenActiveHomeMissing(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CODEX_HOME", "/missing")
@@ -613,11 +714,14 @@ func TestFetcherFallsBackToHighestPressureWhenActiveHomeMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.AccountEmail != "b@example.com" {
-		t.Fatalf("expected fallback to highest-pressure account identity, got %q", out.AccountEmail)
+	if out.WindowDataAvailable {
+		t.Fatalf("expected active window data to be unavailable when active home is missing")
 	}
-	if out.WindowAccountLabel != "b" {
-		t.Fatalf("expected fallback window label b, got %q", out.WindowAccountLabel)
+	if out.AccountEmail != "" {
+		t.Fatalf("expected no account email when active home is missing, got %q", out.AccountEmail)
+	}
+	if out.WindowAccountLabel != "" {
+		t.Fatalf("expected no window account label when active home is missing, got %q", out.WindowAccountLabel)
 	}
 }
 
@@ -732,7 +836,6 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 
 		totalIdentities := map[string]struct{}{}
 		successfulIdentities := map[string]struct{}{}
-		var expectedSelected *Summary
 		var activeSummary *Summary
 		expectedObserved5h := int64(0)
 		expectedObserved1w := int64(0)
@@ -748,17 +851,11 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 				accountOut.AccountEmail = summary.AccountEmail
 				accountOut.AccountID = summary.AccountID
 				accountOut.UserID = summary.UserID
-				if shouldSelectSummary(expectedSelected, summary) {
-					expectedSelected = summary
-				}
 				if home == activeHome {
 					activeSummary = summary
 				}
 			}
 			key := accountIdentityOrHomeKey(accountOut, home)
-			if key == "" {
-				key = "label:" + account.account.Label
-			}
 			totalIdentities[key] = struct{}{}
 			if summary != nil {
 				successfulIdentities[key] = struct{}{}
@@ -792,6 +889,9 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 		}
 
 		if activeSummary != nil {
+			if !out.WindowDataAvailable {
+				t.Fatalf("iter %d: expected active window data to be available", iter)
+			}
 			if out.AccountEmail != activeSummary.AccountEmail {
 				t.Fatalf("iter %d: expected active account email %q, got %q", iter, activeSummary.AccountEmail, out.AccountEmail)
 			}
@@ -805,16 +905,9 @@ func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
 					out.SecondaryWindow.UsedPercent,
 				)
 			}
-		} else if expectedSelected != nil {
-			if out.PrimaryWindow.UsedPercent != expectedSelected.PrimaryWindow.UsedPercent ||
-				out.SecondaryWindow.UsedPercent != expectedSelected.SecondaryWindow.UsedPercent {
-				t.Fatalf("iter %d: expected fallback window pair %d/%d, got %d/%d",
-					iter,
-					expectedSelected.PrimaryWindow.UsedPercent,
-					expectedSelected.SecondaryWindow.UsedPercent,
-					out.PrimaryWindow.UsedPercent,
-					out.SecondaryWindow.UsedPercent,
-				)
+		} else {
+			if out.WindowDataAvailable {
+				t.Fatalf("iter %d: expected window data to be unavailable without active summary", iter)
 			}
 		}
 	}

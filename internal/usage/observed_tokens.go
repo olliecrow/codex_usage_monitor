@@ -23,6 +23,7 @@ type ObservedTokenEstimate struct {
 	Window5h     ObservedTokenBreakdown
 	WindowWeekly ObservedTokenBreakdown
 	Status       string
+	Warming      bool
 	Note         string
 	Warnings     []string
 }
@@ -164,8 +165,9 @@ func (e *observedTokenEstimator) Estimate(codexHome string, now time.Time) (Obse
 	}
 
 	return ObservedTokenEstimate{
-		Status: observedTokensStatusUnavailable,
-		Note:   "warming token estimate",
+		Status:  observedTokensStatusUnavailable,
+		Warming: true,
+		Note:    "warming token estimate",
 	}, nil
 }
 
@@ -190,17 +192,11 @@ func computeObservedTokenEstimate(codexHome string, now time.Time) (ObservedToke
 	cutoff5h := now.Add(-5 * time.Hour)
 	cutoff1w := now.Add(-7 * 24 * time.Hour)
 
-	var total5h tokenAccumulator
-	var totalWeekly tokenAccumulator
-	for _, file := range files {
-		file5h, fileWeekly, fileWarnings, err := estimateTokensFromFile(file, cutoff5h, cutoff1w)
-		if err != nil {
-			return ObservedTokenEstimate{}, err
-		}
-		total5h.add(file5h)
-		totalWeekly.add(fileWeekly)
-		warnings = append(warnings, fileWarnings...)
+	total5h, totalWeekly, fileWarnings, err := estimateTokensAcrossFiles(files, cutoff5h, cutoff1w)
+	if err != nil {
+		return ObservedTokenEstimate{}, err
 	}
+	warnings = append(warnings, fileWarnings...)
 
 	return ObservedTokenEstimate{
 		Window5h:     total5h.toBreakdown(),
@@ -209,6 +205,77 @@ func computeObservedTokenEstimate(codexHome string, now time.Time) (ObservedToke
 		Note:         "local estimate",
 		Warnings:     dedupeStrings(warnings),
 	}, nil
+}
+
+type fileEstimateResult struct {
+	window5h     tokenAccumulator
+	windowWeekly tokenAccumulator
+	warnings     []string
+	err          error
+}
+
+func estimateTokensAcrossFiles(files []string, cutoff5h, cutoff1w time.Time) (tokenAccumulator, tokenAccumulator, []string, error) {
+	if len(files) == 0 {
+		return tokenAccumulator{}, tokenAccumulator{}, nil, nil
+	}
+
+	parallelism := len(files)
+	if parallelism > 4 {
+		parallelism = 4
+	}
+	if parallelism < 1 {
+		parallelism = 1
+	}
+
+	jobs := make(chan string)
+	results := make(chan fileEstimateResult, parallelism)
+	var wg sync.WaitGroup
+
+	for i := 0; i < parallelism; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range jobs {
+				file5h, fileWeekly, fileWarnings, err := estimateTokensFromFile(file, cutoff5h, cutoff1w)
+				results <- fileEstimateResult{
+					window5h:     file5h,
+					windowWeekly: fileWeekly,
+					warnings:     fileWarnings,
+					err:          err,
+				}
+			}
+		}()
+	}
+
+	go func() {
+		for _, file := range files {
+			jobs <- file
+		}
+		close(jobs)
+		wg.Wait()
+		close(results)
+	}()
+
+	var total5h tokenAccumulator
+	var totalWeekly tokenAccumulator
+	var warnings []string
+	var firstErr error
+
+	for result := range results {
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		total5h.add(result.window5h)
+		totalWeekly.add(result.windowWeekly)
+		warnings = append(warnings, result.warnings...)
+	}
+	if firstErr != nil {
+		return tokenAccumulator{}, tokenAccumulator{}, nil, firstErr
+	}
+	return total5h, totalWeekly, warnings, nil
 }
 
 func discoverRecentUsageFiles(codexHome string, now time.Time) ([]string, []string, error) {

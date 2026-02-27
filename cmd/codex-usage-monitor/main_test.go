@@ -50,6 +50,16 @@ func TestRunCompletionRejectsUnknownShell(t *testing.T) {
 	}
 }
 
+func TestRunSnapshotCommandIsNotSupported(t *testing.T) {
+	code, _, stderr := runWithCapturedOutput(t, []string{"snapshot"})
+	if code != 2 {
+		t.Fatalf("expected code 2 for unsupported command, got %d", code)
+	}
+	if !strings.Contains(stderr, "unknown command: snapshot") {
+		t.Fatalf("expected unknown snapshot command error, got:\n%s", stderr)
+	}
+}
+
 func runWithCapturedOutput(t *testing.T, args []string) (int, string, string) {
 	t.Helper()
 	origStdout := os.Stdout

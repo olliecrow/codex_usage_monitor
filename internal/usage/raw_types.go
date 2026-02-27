@@ -49,6 +49,7 @@ func normalizeSummary(source string, snapshot rateLimitSnapshotRaw, additionalLi
 	out := &Summary{
 		Source:               source,
 		PlanType:             snapshot.PlanType,
+		WindowDataAvailable:  true,
 		PrimaryWindow:        toWindowSummary(snapshot.Primary),
 		SecondaryWindow:      toWindowSummary(snapshot.Secondary),
 		AdditionalLimitCount: additionalLimitCount,

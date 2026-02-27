@@ -76,6 +76,23 @@ func TestObservedEstimatorReturnsUnavailableForInvalidHome(t *testing.T) {
 	}
 }
 
+func TestObservedEstimatorAsyncWarmupSetsWarmingFlag(t *testing.T) {
+	now := time.Now().UTC()
+	home := t.TempDir()
+	estimator := newObservedTokenEstimator(0, true)
+
+	estimate, err := estimator.Estimate(home, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if estimate.Status != observedTokensStatusUnavailable {
+		t.Fatalf("expected unavailable status during async warmup, got %q", estimate.Status)
+	}
+	if !estimate.Warming {
+		t.Fatalf("expected warming flag during async warmup")
+	}
+}
+
 func TestEstimateTokensFromFileDoesNotDoubleCountDuplicateTotals(t *testing.T) {
 	now := time.Date(2026, 2, 26, 20, 0, 0, 0, time.UTC)
 	cutoff5h := now.Add(-5 * time.Hour)

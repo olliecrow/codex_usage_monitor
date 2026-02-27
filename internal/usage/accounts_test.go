@@ -154,3 +154,58 @@ func TestAccountCollectorDeduplicatesSymlinkAndRealHomes(t *testing.T) {
 		t.Fatalf("expected higher-priority symlink label to win, got %q", accounts[0].Label)
 	}
 }
+
+func TestResolveAccountsFilePathUsesLegacyWhenDefaultMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv(accountsFileEnvVar, "")
+
+	legacyDir := filepath.Join(tmp, legacyMonitorDirName)
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
+	}
+	legacyFile := filepath.Join(legacyDir, defaultAccountsFileName)
+	if err := os.WriteFile(legacyFile, []byte(`{"version":1,"accounts":[]}`), 0o600); err != nil {
+		t.Fatalf("write legacy accounts file: %v", err)
+	}
+
+	path, err := resolveAccountsFilePath()
+	if err != nil {
+		t.Fatalf("resolve accounts file path: %v", err)
+	}
+	if path != legacyFile {
+		t.Fatalf("expected legacy path %q, got %q", legacyFile, path)
+	}
+}
+
+func TestResolveAccountsFilePathPrefersDefaultDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv(accountsFileEnvVar, "")
+
+	defaultDir := filepath.Join(tmp, defaultMonitorDirName)
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		t.Fatalf("mkdir default dir: %v", err)
+	}
+	defaultFile := filepath.Join(defaultDir, defaultAccountsFileName)
+	if err := os.WriteFile(defaultFile, []byte(`{"version":1,"accounts":[]}`), 0o600); err != nil {
+		t.Fatalf("write default accounts file: %v", err)
+	}
+
+	legacyDir := filepath.Join(tmp, legacyMonitorDirName)
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
+	}
+	legacyFile := filepath.Join(legacyDir, defaultAccountsFileName)
+	if err := os.WriteFile(legacyFile, []byte(`{"version":1,"accounts":[]}`), 0o600); err != nil {
+		t.Fatalf("write legacy accounts file: %v", err)
+	}
+
+	path, err := resolveAccountsFilePath()
+	if err != nil {
+		t.Fatalf("resolve accounts file path: %v", err)
+	}
+	if path != defaultFile {
+		t.Fatalf("expected default path %q, got %q", defaultFile, path)
+	}
+}

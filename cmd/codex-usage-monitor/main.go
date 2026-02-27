@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -27,8 +26,6 @@ func run(args []string) int {
 	switch args[0] {
 	case "tui":
 		return runTUI(args[1:])
-	case "snapshot", "status":
-		return runSnapshot(args[1:])
 	case "doctor":
 		return runDoctor(args[1:])
 	case "completion":
@@ -65,45 +62,6 @@ func runCompletion(args []string) int {
 	return 0
 }
 
-func runSnapshot(args []string) int {
-	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	jsonOutput := fs.Bool("json", false, "output normalized JSON")
-	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if *timeout <= 0 {
-		fmt.Fprintln(os.Stderr, "error: --timeout must be > 0")
-		return 2
-	}
-
-	fetcher := usage.NewSnapshotFetcher()
-	defer fetcher.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-
-	out, err := fetcher.Fetch(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-
-	if *jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			fmt.Fprintf(os.Stderr, "error: failed to encode JSON: %v\n", err)
-			return 1
-		}
-		return 0
-	}
-
-	printSnapshotHuman(out)
-	return 0
-}
-
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -115,6 +73,9 @@ func runDoctor(args []string) int {
 	if *timeout <= 0 {
 		fmt.Fprintln(os.Stderr, "error: --timeout must be > 0")
 		return 2
+	}
+	if err := usage.EnsureMonitorDataDir(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not ensure monitor data dir: %v\n", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -157,10 +118,13 @@ func runTUI(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --timeout must be > 0")
 		return 2
 	}
+	if err := usage.EnsureMonitorDataDir(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not ensure monitor data dir: %v\n", err)
+	}
 
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		fmt.Fprintln(os.Stderr, "warning: interactive TUI requires a TTY, falling back to snapshot output")
-		return runSnapshot([]string{"--timeout", timeout.String()})
+		fmt.Fprintln(os.Stderr, "error: interactive TUI requires a TTY")
+		return 1
 	}
 
 	fetcher := usage.NewDefaultFetcher()
@@ -180,110 +144,6 @@ func runTUI(args []string) int {
 		return 1
 	}
 	return 0
-}
-
-func printSnapshotHuman(out *usage.Summary) {
-	fmt.Printf("data source: %s\n", out.Source)
-	fmt.Printf("subscription plan: %s\n", out.PlanType)
-	if out.AccountEmail != "" {
-		fmt.Printf("account: %s\n", out.AccountEmail)
-	}
-	if out.AccountID != "" {
-		fmt.Printf("account id: %s\n", out.AccountID)
-	}
-	if out.UserID != "" {
-		fmt.Printf("user id: %s\n", out.UserID)
-	}
-	fmt.Printf("five-hour window: %d%% used", out.PrimaryWindow.UsedPercent)
-	if out.PrimaryWindow.ResetsAt != nil {
-		fmt.Printf(", resets at %s", out.PrimaryWindow.ResetsAt.Format(time.RFC3339))
-	}
-	if out.PrimaryWindow.SecondsUntilReset != nil {
-		fmt.Printf(", in %s", (time.Duration(*out.PrimaryWindow.SecondsUntilReset) * time.Second).Round(time.Second))
-	}
-	fmt.Println()
-
-	fmt.Printf("weekly window: %d%% used", out.SecondaryWindow.UsedPercent)
-	if out.SecondaryWindow.ResetsAt != nil {
-		fmt.Printf(", resets at %s", out.SecondaryWindow.ResetsAt.Format(time.RFC3339))
-	}
-	if out.SecondaryWindow.SecondsUntilReset != nil {
-		fmt.Printf(", in %s", (time.Duration(*out.SecondaryWindow.SecondsUntilReset) * time.Second).Round(time.Second))
-	}
-	fmt.Println()
-	if out.AdditionalLimitCount > 0 {
-		fmt.Printf("additional limits: %d\n", out.AdditionalLimitCount)
-	}
-	if out.TotalAccounts > 0 {
-		fmt.Printf("accounts: %d detected, %d reachable\n", out.TotalAccounts, out.SuccessfulAccounts)
-	}
-	if out.WindowAccountLabel != "" {
-		fmt.Printf("window account: %s\n", out.WindowAccountLabel)
-	}
-	if out.ObservedTokensStatus != "" {
-		fmt.Printf("observed token estimate status: %s\n", out.ObservedTokensStatus)
-		fmt.Printf("five-hour tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindow5h, out.ObservedTokens5h))
-		if split := formatObservedWindowSplit(out.ObservedWindow5h); split != "" {
-			fmt.Printf("  estimated: %s\n", split)
-		}
-		fmt.Printf("weekly tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindowWeekly, out.ObservedTokensWeekly))
-		if split := formatObservedWindowSplit(out.ObservedWindowWeekly); split != "" {
-			fmt.Printf("  estimated: %s\n", split)
-		}
-	}
-	for _, warning := range out.Warnings {
-		fmt.Printf("warning: %s\n", warning)
-	}
-}
-
-func formatObservedWindowShort(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) string {
-	if win == nil {
-		if fallbackTotal == nil {
-			return "n/a"
-		}
-		return formatCompactCount(*fallbackTotal)
-	}
-	return formatCompactCount(win.Total)
-}
-
-func formatObservedWindowSplit(win *usage.ObservedTokenBreakdown) string {
-	if win == nil || !win.HasSplit {
-		return ""
-	}
-	parts := []string{
-		"input " + formatCompactCount(win.Input),
-		"cached input " + formatCompactCount(win.CachedInput),
-		"output " + formatCompactCount(win.Output),
-	}
-	if win.ReasoningOutput > 0 {
-		parts = append(parts, "reasoning "+formatCompactCount(win.ReasoningOutput))
-	}
-	if win.HasCachedOutput && win.CachedOutput > 0 {
-		parts = append(parts, "cached output "+formatCompactCount(win.CachedOutput))
-	}
-	return strings.Join(parts, " | ")
-}
-
-func formatCompactCount(v int64) string {
-	sign := ""
-	if v < 0 {
-		sign = "-"
-		v = -v
-	}
-	if v < 1000 {
-		return fmt.Sprintf("%s%d", sign, v)
-	}
-
-	units := []string{"", "k", "m", "b", "t"}
-	value := float64(v)
-	unitIndex := 0
-	for value >= 1000 && unitIndex < len(units)-1 {
-		value /= 1000
-		unitIndex++
-	}
-
-	rounded := int64(math.Round(value))
-	return fmt.Sprintf("%s%d%s", sign, rounded, units[unitIndex])
 }
 
 func printDoctorHuman(report usage.DoctorReport) {
@@ -308,17 +168,12 @@ func printRootUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  codex-usage-monitor                       Run terminal user interface (default)")
 	fmt.Println("  codex-usage-monitor tui [flags]           Run terminal user interface explicitly")
-	fmt.Println("  codex-usage-monitor snapshot [flags]      Print one usage snapshot")
 	fmt.Println("  codex-usage-monitor doctor [flags]        Run setup and source checks")
 	fmt.Println("  codex-usage-monitor completion [shell]    Print shell completion script")
 	fmt.Println()
 	fmt.Println("Completion:")
 	fmt.Println("  codex-usage-monitor completion bash > ~/.local/share/bash-completion/completions/codex-usage-monitor")
 	fmt.Println("  codex-usage-monitor completion zsh > ~/.zsh/completions/_codex-usage-monitor")
-	fmt.Println()
-	fmt.Println("Snapshot flags:")
-	fmt.Println("  --json            Output normalized JSON")
-	fmt.Println("  --timeout 10s     Request timeout")
 	fmt.Println()
 	fmt.Println("Doctor flags:")
 	fmt.Println("  --json            Output report as JSON")
@@ -338,7 +193,7 @@ func completionScript(shell string) (string, error) {
 _codex_usage_monitor_completion() {
   local cur prev words cword
   _init_completion || return
-  local commands="tui snapshot status doctor completion help"
+  local commands="tui doctor completion help"
   if [[ ${cword} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
     return
@@ -346,9 +201,6 @@ _codex_usage_monitor_completion() {
   case "${words[1]}" in
     completion)
       COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") )
-      ;;
-    snapshot|status)
-      COMPREPLY=( $(compgen -W "--json --timeout" -- "${cur}") )
       ;;
     doctor)
       COMPREPLY=( $(compgen -W "--json --timeout" -- "${cur}") )
@@ -369,8 +221,6 @@ _codex_usage_monitor() {
   local -a commands
   commands=(
     'tui:run terminal user interface'
-    'snapshot:print one usage snapshot'
-    'status:alias for snapshot'
     'doctor:run setup and source checks'
     'completion:print shell completion script'
     'help:show help text'
@@ -383,7 +233,7 @@ _codex_usage_monitor() {
     completion)
       _values 'shell' bash zsh
       ;;
-    snapshot|status|doctor)
+    doctor)
       _values 'flag' --json --timeout
       ;;
     tui)

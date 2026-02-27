@@ -22,6 +22,8 @@ type Fetcher struct {
 	accountsLastRefreshedAt time.Time
 }
 
+const unverifiedAccountIdentityKey = "unverified"
+
 type accountFetcher struct {
 	account  MonitorAccount
 	primary  Source
@@ -91,12 +93,9 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		out.Warnings = append(out.Warnings, f.initializationNote)
 	}
 
-	var selectedSuccess *Summary
-	selectedLabel := ""
-	planTypes := map[string]struct{}{}
-
 	anyAccountSuccess := false
 	anyObservedAvailable := false
+	anyObservedWarming := false
 	unavailableObservedCount := 0
 	totalAccountIdentities := map[string]struct{}{}
 	successfulAccountIdentities := map[string]struct{}{}
@@ -105,28 +104,25 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	activeHome := resolveActiveCodexHome()
 	var activeSuccess *Summary
 	activeLabel := ""
+	activeHomeDiscovered := false
+	activeFetchFailed := false
 
 	results := f.fetchAccountsConcurrent(ctx, now)
 	for _, result := range results {
 		accountOut := result.account
 		accountIdentity := accountIdentityOrHomeKey(accountOut, result.codexHome)
-		if accountIdentity != "" {
-			totalAccountIdentities[accountIdentity] = struct{}{}
+		totalAccountIdentities[accountIdentity] = struct{}{}
+		if activeHome != "" && normalizeHome(result.codexHome) == activeHome {
+			activeHomeDiscovered = true
 		}
 		if result.fetchErr != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("account %q fetch failed: %v", accountOut.Label, result.fetchErr))
+			if activeHome != "" && normalizeHome(result.codexHome) == activeHome {
+				activeFetchFailed = true
+			}
 		} else if result.snapshot != nil {
 			anyAccountSuccess = true
-			if accountIdentity != "" {
-				successfulAccountIdentities[accountIdentity] = struct{}{}
-			}
-			if accountOut.PlanType != "" {
-				planTypes[accountOut.PlanType] = struct{}{}
-			}
-			if shouldSelectSummary(selectedSuccess, result.snapshot) {
-				selectedSuccess = result.snapshot
-				selectedLabel = accountOut.Label
-			}
+			successfulAccountIdentities[accountIdentity] = struct{}{}
 			if activeHome != "" && normalizeHome(result.codexHome) == activeHome {
 				activeSuccess = result.snapshot
 				activeLabel = accountOut.Label
@@ -143,15 +139,15 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 			}
 
 			identity := accountIdentityOrHomeKey(accountOut, result.codexHome)
-			if identity == "" {
-				identity = "label:" + strings.TrimSpace(accountOut.Label)
-			}
 			prev := seenObservedByIdentity[identity]
 			next := mergeObservedPairMax(prev, pair)
 			seenObservedByIdentity[identity] = next
 		}
 		if result.observedUnavailable {
 			unavailableObservedCount++
+		}
+		if result.account.ObservedTokensWarming {
+			anyObservedWarming = true
 		}
 		out.Warnings = append(out.Warnings, result.warnings...)
 		existing, ok := accountByIdentity[accountIdentity]
@@ -166,29 +162,30 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	out.TotalAccounts = len(totalAccountIdentities)
 	out.SuccessfulAccounts = len(successfulAccountIdentities)
 
-	if selectedSuccess != nil {
-		windowSource := selectedSuccess
-		windowLabel := selectedLabel
-		if activeSuccess != nil {
-			windowSource = activeSuccess
-			if activeLabel != "" {
-				windowLabel = activeLabel
-			}
+	if activeSuccess != nil {
+		out.Source = activeSuccess.Source
+		out.PlanType = activeSuccess.PlanType
+		out.AccountEmail = activeSuccess.AccountEmail
+		out.AccountID = activeSuccess.AccountID
+		out.UserID = activeSuccess.UserID
+		out.WindowDataAvailable = true
+		out.PrimaryWindow = activeSuccess.PrimaryWindow
+		out.SecondaryWindow = activeSuccess.SecondaryWindow
+		out.WindowAccountLabel = activeLabel
+		out.AdditionalLimitCount = activeSuccess.AdditionalLimitCount
+		out.FetchedAt = activeSuccess.FetchedAt
+	} else {
+		out.WindowDataAvailable = false
+		switch {
+		case activeHome == "":
+			out.Warnings = append(out.Warnings, "active account home is unavailable; window cards are unavailable")
+		case !activeHomeDiscovered:
+			out.Warnings = append(out.Warnings, "active account home is not in discovered accounts; window cards are unavailable")
+		case activeFetchFailed:
+			out.Warnings = append(out.Warnings, "active account usage fetch failed; window cards are unavailable")
+		default:
+			out.Warnings = append(out.Warnings, "active account usage is unavailable; window cards are unavailable")
 		}
-
-		out.Source = windowSource.Source
-		out.PlanType = selectedSuccess.PlanType
-		if len(planTypes) > 1 {
-			out.PlanType = "mixed"
-		}
-		out.AccountEmail = windowSource.AccountEmail
-		out.AccountID = windowSource.AccountID
-		out.UserID = windowSource.UserID
-		out.PrimaryWindow = windowSource.PrimaryWindow
-		out.SecondaryWindow = windowSource.SecondaryWindow
-		out.WindowAccountLabel = windowLabel
-		out.AdditionalLimitCount = windowSource.AdditionalLimitCount
-		out.FetchedAt = windowSource.FetchedAt
 	}
 
 	if anyObservedAvailable {
@@ -202,6 +199,7 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		out.ObservedTokens5h = int64Ptr(observedTotal.Window5h.Total)
 		out.ObservedTokensWeekly = int64Ptr(observedTotal.WindowWeekly.Total)
 		out.ObservedTokensNote = "sum across accounts"
+		out.ObservedTokensWarming = false
 		if unavailableObservedCount > 0 {
 			out.ObservedTokensStatus = observedTokensStatusPartial
 			out.ObservedTokensNote = "partial sum across accounts; some account homes unavailable"
@@ -209,6 +207,7 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	} else if unavailableObservedCount > 0 {
 		out.ObservedTokensStatus = observedTokensStatusUnavailable
 		out.ObservedTokensNote = "token estimate warming or unavailable"
+		out.ObservedTokensWarming = anyObservedWarming
 	}
 
 	out.Warnings = dedupeStrings(out.Warnings)
@@ -283,22 +282,6 @@ func (f *Fetcher) Fallback() Source {
 func int64Ptr(v int64) *int64 {
 	out := v
 	return &out
-}
-
-func shouldSelectSummary(current *Summary, candidate *Summary) bool {
-	if candidate == nil {
-		return false
-	}
-	if current == nil {
-		return true
-	}
-	if candidate.SecondaryWindow.UsedPercent != current.SecondaryWindow.UsedPercent {
-		return candidate.SecondaryWindow.UsedPercent > current.SecondaryWindow.UsedPercent
-	}
-	if candidate.PrimaryWindow.UsedPercent != current.PrimaryWindow.UsedPercent {
-		return candidate.PrimaryWindow.UsedPercent > current.PrimaryWindow.UsedPercent
-	}
-	return candidate.FetchedAt.After(current.FetchedAt)
 }
 
 func (f *Fetcher) refreshAccounts(now time.Time, force bool) {
@@ -411,14 +394,11 @@ func identityKey(email, accountID, userID string) string {
 	return ""
 }
 
-func accountIdentityOrHomeKey(account AccountSummary, codexHome string) string {
+func accountIdentityOrHomeKey(account AccountSummary, _ string) string {
 	if identity := identityKey(account.AccountEmail, account.AccountID, account.UserID); identity != "" {
 		return identity
 	}
-	if home := normalizeHome(codexHome); home != "" {
-		return "home:" + home
-	}
-	return ""
+	return unverifiedAccountIdentityKey
 }
 
 type accountSummaryWithHome struct {
@@ -563,11 +543,13 @@ func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher
 		if estimateErr != nil {
 			result.account.ObservedTokensStatus = observedTokensStatusUnavailable
 			result.account.ObservedTokensNote = estimate.Note
+			result.account.ObservedTokensWarming = estimate.Warming
 			result.observedUnavailable = true
 			result.warnings = append(result.warnings, fmt.Sprintf("account %q observed tokens unavailable: %v", account.account.Label, estimateErr))
 		} else {
 			result.account.ObservedTokensStatus = estimate.Status
 			result.account.ObservedTokensNote = estimate.Note
+			result.account.ObservedTokensWarming = estimate.Warming
 			result.account.Warnings = append(result.account.Warnings, estimate.Warnings...)
 			result.account.ObservedWindow5h = &estimate.Window5h
 			result.account.ObservedWindowWeekly = &estimate.WindowWeekly
