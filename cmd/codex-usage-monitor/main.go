@@ -31,6 +31,8 @@ func run(args []string) int {
 		return runSnapshot(args[1:])
 	case "doctor":
 		return runDoctor(args[1:])
+	case "completion":
+		return runCompletion(args[1:])
 	case "-h", "--help", "help":
 		printRootUsage()
 		return 0
@@ -43,6 +45,24 @@ func run(args []string) int {
 		printRootUsage()
 		return 2
 	}
+}
+
+func runCompletion(args []string) int {
+	if len(args) > 1 {
+		fmt.Fprintln(os.Stderr, "error: completion accepts zero or one shell argument (bash or zsh)")
+		return 2
+	}
+	shell := "bash"
+	if len(args) == 1 {
+		shell = strings.TrimSpace(args[0])
+	}
+	script, err := completionScript(shell)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	fmt.Print(script)
+	return 0
 }
 
 func runSnapshot(args []string) int {
@@ -204,11 +224,11 @@ func printSnapshotHuman(out *usage.Summary) {
 		fmt.Printf("observed token estimate status: %s\n", out.ObservedTokensStatus)
 		fmt.Printf("five-hour tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindow5h, out.ObservedTokens5h))
 		if split := formatObservedWindowSplit(out.ObservedWindow5h); split != "" {
-			fmt.Printf("  split: %s\n", split)
+			fmt.Printf("  estimated: %s\n", split)
 		}
 		fmt.Printf("weekly tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindowWeekly, out.ObservedTokensWeekly))
 		if split := formatObservedWindowSplit(out.ObservedWindowWeekly); split != "" {
-			fmt.Printf("  split: %s\n", split)
+			fmt.Printf("  estimated: %s\n", split)
 		}
 	}
 	for _, warning := range out.Warnings {
@@ -282,23 +302,98 @@ func printDoctorHuman(report usage.DoctorReport) {
 func printRootUsage() {
 	fmt.Println("codex usage monitor")
 	fmt.Println()
-	fmt.Println("usage:")
-	fmt.Println("  codex-usage-monitor                 # run tui (default)")
-	fmt.Println("  codex-usage-monitor tui [flags]")
-	fmt.Println("  codex-usage-monitor snapshot [flags]")
-	fmt.Println("  codex-usage-monitor doctor [flags]")
+	fmt.Println("Track Codex subscription usage in a terminal user interface (TUI).")
+	fmt.Println("The monitor is read-only and does not mutate Codex account data.")
 	fmt.Println()
-	fmt.Println("snapshot flags:")
-	fmt.Println("  --json")
-	fmt.Println("  --timeout 10s")
+	fmt.Println("Usage:")
+	fmt.Println("  codex-usage-monitor                       Run terminal user interface (default)")
+	fmt.Println("  codex-usage-monitor tui [flags]           Run terminal user interface explicitly")
+	fmt.Println("  codex-usage-monitor snapshot [flags]      Print one usage snapshot")
+	fmt.Println("  codex-usage-monitor doctor [flags]        Run setup and source checks")
+	fmt.Println("  codex-usage-monitor completion [shell]    Print shell completion script")
 	fmt.Println()
-	fmt.Println("doctor flags:")
-	fmt.Println("  --json")
-	fmt.Println("  --timeout 20s")
+	fmt.Println("Completion:")
+	fmt.Println("  codex-usage-monitor completion bash > ~/.local/share/bash-completion/completions/codex-usage-monitor")
+	fmt.Println("  codex-usage-monitor completion zsh > ~/.zsh/completions/_codex-usage-monitor")
 	fmt.Println()
-	fmt.Println("tui flags:")
-	fmt.Println("  --interval 60s")
-	fmt.Println("  --timeout 10s")
-	fmt.Println("  --no-color")
-	fmt.Println("  --no-alt-screen")
+	fmt.Println("Snapshot flags:")
+	fmt.Println("  --json            Output normalized JSON")
+	fmt.Println("  --timeout 10s     Request timeout")
+	fmt.Println()
+	fmt.Println("Doctor flags:")
+	fmt.Println("  --json            Output report as JSON")
+	fmt.Println("  --timeout 20s     Doctor timeout")
+	fmt.Println()
+	fmt.Println("Terminal user interface flags:")
+	fmt.Println("  --interval 60s    Poll interval")
+	fmt.Println("  --timeout 10s     Per-poll fetch timeout")
+	fmt.Println("  --no-color        Disable color styling")
+	fmt.Println("  --no-alt-screen   Disable alternate screen mode")
+}
+
+func completionScript(shell string) (string, error) {
+	switch shell {
+	case "bash":
+		return `# bash completion for codex-usage-monitor
+_codex_usage_monitor_completion() {
+  local cur prev words cword
+  _init_completion || return
+  local commands="tui snapshot status doctor completion help"
+  if [[ ${cword} -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+    return
+  fi
+  case "${words[1]}" in
+    completion)
+      COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") )
+      ;;
+    snapshot|status)
+      COMPREPLY=( $(compgen -W "--json --timeout" -- "${cur}") )
+      ;;
+    doctor)
+      COMPREPLY=( $(compgen -W "--json --timeout" -- "${cur}") )
+      ;;
+    tui)
+      COMPREPLY=( $(compgen -W "--interval --timeout --no-color --no-alt-screen" -- "${cur}") )
+      ;;
+    *)
+      COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
+      ;;
+  esac
+}
+complete -F _codex_usage_monitor_completion codex-usage-monitor
+`, nil
+	case "zsh":
+		return `#compdef codex-usage-monitor
+_codex_usage_monitor() {
+  local -a commands
+  commands=(
+    'tui:run terminal user interface'
+    'snapshot:print one usage snapshot'
+    'status:alias for snapshot'
+    'doctor:run setup and source checks'
+    'completion:print shell completion script'
+    'help:show help text'
+  )
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+  case "${words[2]}" in
+    completion)
+      _values 'shell' bash zsh
+      ;;
+    snapshot|status|doctor)
+      _values 'flag' --json --timeout
+      ;;
+    tui)
+      _values 'flag' --interval --timeout --no-color --no-alt-screen
+      ;;
+  esac
+}
+_codex_usage_monitor "$@"
+`, nil
+	default:
+		return "", fmt.Errorf("unsupported shell %q (expected bash or zsh)", shell)
+	}
 }

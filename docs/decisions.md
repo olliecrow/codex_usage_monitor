@@ -152,7 +152,7 @@ Enforcement:
 - Mark overall estimate status as `partial` when one or more accounts are unavailable.
 - Keep showing aggregate totals from available accounts when one account is unavailable.
 - Present one aggregate observed-token total across accounts in UI output.
-- Deduplicate duplicate account identities using max-observed merge before aggregate summation.
+- Deduplicate duplicate account identities using normalized email keys and max-observed merge before aggregate summation.
 - Keep duplicate-identity deduplication silent in TUI output to avoid unnecessary operator noise.
 
 Decision:
@@ -253,3 +253,18 @@ No in-TUI command controls beyond process exit.
 Enforcement:
 - No mutating actions are exposed in TUI mode.
 - Keyboard handling supports `Ctrl+C` exit only.
+
+Decision:
+Expose shell completion output and upgrade root CLI help clarity.
+Context:
+The monitor is terminal-first and often run repeatedly; users benefit from command/flag completion and explicit setup examples in help text.
+Rationale:
+`completion [bash|zsh]` plus clearer command descriptions reduce setup friction and typing mistakes while keeping runtime behavior unchanged.
+Trade-offs:
+Completion templates must stay aligned with command and flag evolution.
+Enforcement:
+- CLI supports `codex-usage-monitor completion [bash|zsh]` with bash default.
+- Root help text includes completion install examples and expands `terminal user interface (TUI)` at first mention.
+- Command-level tests cover completion output, default shell behavior, and unknown-shell failure path.
+References:
+`cmd/codex-usage-monitor/main.go`, `cmd/codex-usage-monitor/main_test.go`, `README.md`

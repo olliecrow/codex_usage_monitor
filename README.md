@@ -15,7 +15,7 @@ This project is focused on subscription usage only. It does not track API usage.
 
 ## What it does
 
-- Shows five-hour and weekly usage in a live terminal UI.
+- Shows five-hour and weekly usage in a live terminal user interface (TUI).
 - Refreshes automatically on a fixed interval.
 - Auto-discovers account homes from local system paths and usage signals.
 - Supports optional manual account overrides from a monitor-owned account registry.
@@ -38,6 +38,12 @@ This project is focused on subscription usage only. It does not track API usage.
 - no secrets in code, docs, or history
 
 ## Quick start
+
+Show command help:
+
+```bash
+go run ./cmd/codex-usage-monitor --help
+```
 
 Run the live TUI:
 
@@ -63,12 +69,24 @@ Run doctor checks:
 go run ./cmd/codex-usage-monitor doctor
 ```
 
+Install shell tab completion:
+
+```bash
+# bash
+go run ./cmd/codex-usage-monitor completion bash > ~/.local/share/bash-completion/completions/codex-usage-monitor
+
+# zsh
+mkdir -p ~/.zsh/completions
+go run ./cmd/codex-usage-monitor completion zsh > ~/.zsh/completions/_codex-usage-monitor
+```
+
 ## Commands
 
 - `codex-usage-monitor` runs the TUI by default.
 - `codex-usage-monitor tui` runs the TUI explicitly.
 - `codex-usage-monitor snapshot` prints one usage snapshot.
 - `codex-usage-monitor doctor` runs setup and source checks.
+- `codex-usage-monitor completion [bash|zsh]` prints a shell completion script.
 - In TUI mode, exit with `Ctrl+C`.
 
 ## Account configuration
@@ -95,6 +113,12 @@ Optional manual account file: `~/.codex-usage-monitor/accounts.json`
 ```
 
 You can override the file path with `CODEX_USAGE_MONITOR_ACCOUNTS_FILE`.
+
+## Known limitations
+
+- This tool tracks subscription usage only, not API usage.
+- Observed token totals are local estimates and can miss usage from other machines.
+- If primary app-server access fails, fallback data may be partial.
 
 ## Notes
 
