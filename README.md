@@ -27,10 +27,14 @@ This project is focused on subscription usage only. It does not track API usage.
 - Falls back to OAuth usage endpoint if app-server is unavailable.
 - Estimates observed token usage totals for the last five hours and last week from local `token_count` events.
 - Shows observed token estimates aggregated across detected accounts (with duplicate-identity deduplication safeguards).
-- Keeps the TUI compact: only aggregate token totals are shown in the bottom panel.
-- In multi-account mode, top window cards follow the active Codex account (with a fallback to the highest-pressure reachable account if active account fetch fails).
+- In multi-account mode, top window cards only follow the active Codex account. If active-account usage is unavailable, cards are shown as unavailable.
+- Deduplicates account identities with precedence: email, then account ID, then user ID. Accounts without any of these are merged into a single `unverified` identity bucket.
+- Shows aggregate token totals and split categories (total, input, input cached, output, output reasoning) in the bottom panel.
+- Keeps token-category rows structurally stable in the TUI by showing `n/a` placeholders when split fields are unavailable.
+- Shows bracketed token-state badges in header rows (`[loading]`, `[refreshing]`, `[ready]`, `[partial]`, `[unavailable]`) before `(sum across accounts)`.
+- Shows one compact accounts line in the bottom panel with detected count and bracketed identity list (emails/IDs), truncated to panel width when needed.
+- Shows fixed-row named status checks in the bottom panel (`active windows`, `five-hour token estimate`, `weekly token estimate`, `source + diagnostics`) with `status`/`warning`/`error` severity.
 - Includes a doctor command to check local setup and data source health.
-- Shows account identity metadata in snapshot/json output when available, for example account email.
 - Detects auth-file changes and refreshes app-server session so sign-out/sign-in switches are picked up.
 
 ## Design goals
@@ -61,18 +65,6 @@ Run the live TUI:
 go run ./cmd/codex-usage-monitor
 ```
 
-Get one snapshot:
-
-```bash
-go run ./cmd/codex-usage-monitor snapshot
-```
-
-Get JSON snapshot:
-
-```bash
-go run ./cmd/codex-usage-monitor snapshot --json
-```
-
 Run doctor checks:
 
 ```bash
@@ -94,7 +86,6 @@ go run ./cmd/codex-usage-monitor completion zsh > ~/.zsh/completions/_codex-usag
 
 - `codex-usage-monitor` runs the TUI by default.
 - `codex-usage-monitor tui` runs the TUI explicitly.
-- `codex-usage-monitor snapshot` prints one usage snapshot.
 - `codex-usage-monitor doctor` runs setup and source checks.
 - `codex-usage-monitor completion [bash|zsh]` prints a shell completion script.
 - In TUI mode, exit with `Ctrl+C`.
@@ -110,7 +101,10 @@ Only directories with Codex usage signals (`auth.json`, `sessions`, or `archived
 
 This makes multi-account setup work without manual config in common cases.
 
-Optional manual account file: `~/.codex-usage-monitor/accounts.json`
+Optional manual account file: `~/codex-usage-monitor/accounts.json`
+
+The monitor creates `~/codex-usage-monitor/` as its default monitor-owned data directory.
+For compatibility, if the legacy file `~/.codex-usage-monitor/accounts.json` exists and the new path is absent, it is still read.
 
 ```json
 {
@@ -138,6 +132,7 @@ You can override the file path with `CODEX_USAGE_MONITOR_ACCOUNTS_FILE`.
   - `estimated` when all configured accounts are readable
   - `partial` when one or more configured accounts are unavailable
   - `unavailable` when no account estimate is available
+- Observed-token warmup is tracked explicitly (`observed_tokens_warming`) and drives startup/loading UI state without relying on note text parsing.
 - If observed-token estimation fails for an account, that account is marked `unavailable` and the monitor continues with the other available accounts.
 - Observed tokens are summed across detected accounts for the five-hour and weekly windows.
 - Duplicate account identities are merged internally during token aggregation and this is not surfaced as a UI warning.

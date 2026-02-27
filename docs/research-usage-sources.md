@@ -125,9 +125,8 @@ Interpretation:
 - Implemented persistent app-server session with request/response correlation and restart-on-error behavior.
 - Implemented unified CLI commands:
   - `tui` (default)
-  - `snapshot`
   - `doctor`
-- Implemented non-TTY fallback from `tui` to `snapshot` for robustness in non-interactive environments.
+- Implemented single-mode operation: `tui` requires a TTY and reports an explicit error otherwise.
 - Added viewport and rendering tests for TUI width/height safety.
 - Added fetcher unit tests for primary success, fallback path, and dual-failure behavior.
 

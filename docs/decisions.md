@@ -133,7 +133,7 @@ Trade-offs:
 Adds discovery logic and per-account refresh loops; generic filesystem scanning is broader than a single fixed path.
 Enforcement:
 - Account discovery uses local codex-home signals (`auth.json`, `sessions`, `archived_sessions`) from system paths, not another project's metadata.
-- Optional account list can be loaded from `~/.codex-usage-monitor/accounts.json` (or override env var).
+- Optional account list can be loaded from `~/codex-usage-monitor/accounts.json` (or override env var).
 - Account list is refreshed while running so account add/remove/sign-in changes are picked up.
 - Duplicate account homes are deduplicated.
 
@@ -151,8 +151,8 @@ Enforcement:
 - Mark per-account observed tokens as `estimated` or `unavailable` internally.
 - Mark overall estimate status as `partial` when one or more accounts are unavailable.
 - Keep showing aggregate totals from available accounts when one account is unavailable.
-- Present one aggregate observed-token total across accounts in UI output.
-- Deduplicate duplicate account identities using identity precedence (`email`, then `account_id`, then `user_id`, then normalized home path) and max-observed merge before aggregate summation.
+- Present one aggregate observed-token total across accounts in UI output, with split category bullets.
+- Deduplicate duplicate account identities using identity precedence (`email`, then `account_id`, then `user_id`). Accounts missing all three identifiers are merged into a single `unverified` identity bucket. Max-observed merge is applied before aggregate summation.
 - Keep duplicate-identity deduplication silent in TUI output to avoid unnecessary operator noise.
 
 Decision:
@@ -162,10 +162,11 @@ There is no single authoritative aggregate quota percentage across independent a
 Rationale:
 Users expect top cards to match the currently signed-in Codex account, especially when swapping accounts mid-session.
 Trade-offs:
-If active account fetch fails, cards fall back to the highest-pressure reachable account so the monitor still shows useful limits.
+If active account fetch fails or is missing from discovered accounts, window cards are unavailable until active-account data is reachable.
 Enforcement:
 - In multi-account mode, top 5-hour and weekly cards are sourced from the active account home when available.
-- If active account data is unavailable, fall back to the highest-pressure reachable account (weekly usage, then five-hour usage, then recency).
+- If active account data is unavailable, do not fall back to another account's quota windows.
+- Surface explicit warnings and show window cards as unavailable.
 
 Decision:
 Ship a doctor command.
@@ -180,16 +181,16 @@ Enforcement:
 - Return non-zero exit code when both usage sources fail.
 
 Decision:
-Non-interactive execution should degrade gracefully.
+Single interaction mode only (live TUI session).
 Context:
-TUI programs often fail in environments without a TTY.
+This monitor is intended to run as an ongoing terminal status session, not as a one-shot report command.
 Rationale:
-Fallback behavior is better than a hard failure for scripts and CI logs.
+One mode keeps behavior predictable and avoids divergent paths between snapshot and live operation.
 Trade-offs:
-Non-interactive output is snapshot text, not live UI.
+Non-interactive environments cannot run the monitor UI.
 Enforcement:
-- If no TTY is available, `tui` falls back to `snapshot`.
-- Emit a clear warning when fallback happens.
+- CLI does not provide snapshot/status commands.
+- If no TTY is available, `tui` exits with an explicit error instead of falling back.
 
 Decision:
 Use a persistent app-server session within process lifetime.
@@ -213,7 +214,7 @@ Trade-offs:
 Adds minor extra message noise in output.
 Enforcement:
 - When fallback is used, include a warning describing primary source failure.
-- Always expose the effective source name in snapshot and TUI metadata.
+- Always expose the effective source name in TUI metadata.
 
 Decision:
 Support account switch visibility and auth-change resilience.
@@ -225,7 +226,6 @@ Trade-offs:
 App-server fetch adds one extra lightweight account-read call and an auth-fingerprint check per refresh.
 Enforcement:
 - Include account identity fields in normalized output when available.
-- Display account identity metadata in snapshot output.
 - Detect auth-file token changes and restart app-server session automatically.
 
 Decision:
@@ -239,8 +239,25 @@ No manual refresh hotkey in TUI mode.
 Enforcement:
 - TUI refreshes on interval only.
 - Exit flow uses `Ctrl+C`.
-- TUI bottom panel defaults to compact aggregate token totals across accounts, not per-account token breakdown sections.
+- TUI bottom panel shows aggregate token totals and split category bullets for five-hour and weekly windows.
 - UI labels use `resets in` for countdown clarity.
+
+Decision:
+TUI status surfaces must be explicit, fixed-layout, and startup-clear.
+Context:
+Operators need high confidence during startup and refresh cycles without layout jitter or ambiguous placeholders.
+Rationale:
+Named checks with explicit loading/refreshing/ready semantics reduce confusion and avoid brittle heuristics.
+Trade-offs:
+Slightly denser bottom-panel text and stricter status mapping logic.
+Enforcement:
+- Token aggregate header rows use bracketed state before the aggregate qualifier:
+  - `five-hour tokens [state] (sum across accounts):`
+  - `weekly tokens [state] (sum across accounts):`
+- Bracket states are concise words only (`loading`, `refreshing`, `ready`, `partial`, `unavailable`) and do not include spinner punctuation.
+- Bottom status area is fixed-row and uses named checks (`active windows`, `five-hour token estimate`, `weekly token estimate`, `source + diagnostics`) with explicit `status`/`warning`/`error` prefixes.
+- Observed-token warmup is represented by an explicit boolean (`observed_tokens_warming`) propagated from estimator -> fetcher -> summary/account models; UI loading decisions must not parse freeform note text.
+- If viewport height is constrained, hidden status checks are summarized explicitly (`warning [more checks]: +N hidden`) rather than wrapping lines.
 
 Decision:
 TUI mode is read-only and non-interactive by design.
