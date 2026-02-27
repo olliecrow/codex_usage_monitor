@@ -405,16 +405,6 @@ func Run(opts Options) error {
 	return err
 }
 
-func joinWithPadding(left, right string, width int) string {
-	leftWidth := lipgloss.Width(left)
-	rightWidth := lipgloss.Width(right)
-	padding := width - leftWidth - rightWidth
-	if padding < 1 {
-		return truncateRunes(left+" "+right, width)
-	}
-	return left + strings.Repeat(" ", padding) + right
-}
-
 func joinWithPaddingKeepRight(left, right string, width int) string {
 	if width <= 0 {
 		return ""
