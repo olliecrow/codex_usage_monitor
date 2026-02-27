@@ -383,6 +383,13 @@ func TestViewShowsExitHintAtBottom(t *testing.T) {
 	if !strings.Contains(out, "Ctrl+C to exit") {
 		t.Fatalf("expected bottom exit hint in view")
 	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != m.height {
+		t.Fatalf("expected %d lines, got %d", m.height, len(lines))
+	}
+	if !strings.Contains(lines[len(lines)-1], "Ctrl+C to exit") {
+		t.Fatalf("expected exit hint on bottom row, got: %q", lines[len(lines)-1])
+	}
 	if strings.Contains(out, "last successful snapshot") {
 		t.Fatalf("did not expect last successful snapshot footer line")
 	}

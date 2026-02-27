@@ -195,7 +195,8 @@ func (m Model) View() string {
 	body := m.renderBody()
 	exitHint := m.styles.dim.Render("Ctrl+C to exit")
 
-	combined := lipgloss.JoinVertical(lipgloss.Left, header, body, "", exitHint)
+	top := lipgloss.JoinVertical(lipgloss.Left, header, body, "")
+	combined := pinFooterToBottom(top, exitHint, m.height)
 	return clipToViewport(combined, m.width, m.height)
 }
 
@@ -685,6 +686,37 @@ func clipToViewport(s string, width, height int) string {
 		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func pinFooterToBottom(top, footer string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	footerLines := []string{}
+	if footer != "" {
+		footerLines = strings.Split(footer, "\n")
+	}
+	topLines := []string{}
+	if top != "" {
+		topLines = strings.Split(top, "\n")
+	}
+
+	maxTopLines := height - len(footerLines)
+	if maxTopLines < 0 {
+		maxTopLines = 0
+	}
+	if len(topLines) > maxTopLines {
+		topLines = topLines[:maxTopLines]
+	}
+	for len(topLines) < maxTopLines {
+		topLines = append(topLines, "")
+	}
+
+	all := append(topLines, footerLines...)
+	if len(all) == 0 {
+		return ""
+	}
+	return strings.Join(all, "\n")
 }
 
 func humanDuration(d time.Duration) string {

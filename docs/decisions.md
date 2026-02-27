@@ -285,6 +285,19 @@ Enforcement:
 - Keyboard handling supports `Ctrl+C` exit only.
 
 Decision:
+Pin the `Ctrl+C to exit` hint to the bottom row of the terminal viewport.
+Context:
+Footer hints can drift upward when panel content changes, which makes exit guidance less predictable.
+Rationale:
+A fixed bottom-row footer keeps interaction guidance stable across refreshes and resize events.
+Trade-offs:
+The view reserves the final row for the footer, so content above is clipped/padded to fit.
+Enforcement:
+- TUI composes header/body above a pinned footer row.
+- Viewport clipping/padding preserves footer placement on the terminal's last visible line.
+- Tests assert `Ctrl+C to exit` appears on the bottom row.
+
+Decision:
 Expose shell completion output and upgrade root CLI help clarity.
 Context:
 The monitor is terminal-first and often run repeatedly; users benefit from command/flag completion and explicit setup examples in help text.
