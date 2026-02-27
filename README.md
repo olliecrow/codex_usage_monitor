@@ -2,7 +2,7 @@
 
 Simple terminal usage monitor for Codex subscription limits.
 
-<img width="735" height="402" alt="image" src="https://github.com/user-attachments/assets/4dd95d07-f222-4b3b-9bec-69a2f9c3c172" />
+<img width="706" height="562" alt="image" src="https://github.com/user-attachments/assets/4a3267c6-360d-4cbe-97fe-c327bdec3abb" />
 
 
 ## Current status
