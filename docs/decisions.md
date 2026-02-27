@@ -260,6 +260,19 @@ Enforcement:
 - If viewport height is constrained, hidden status checks are summarized explicitly (`warning [more checks]: +N hidden`) rather than wrapping lines.
 
 Decision:
+Bottom-panel status capacity should scale with actual viewport space.
+Context:
+Some tall terminals still hid status checks early while leaving unused blank space below the panel.
+Rationale:
+Status visibility should be limited by real rendered layout capacity, not coarse viewport thresholds.
+Trade-offs:
+Layout math is slightly more complex and depends on measured panel overhead.
+Enforcement:
+- Compute status-row capacity from rendered window height and panel vertical overhead.
+- Keep named checks fixed and non-wrapping, but only show hidden-check summaries when space is truly constrained.
+- Consume remaining available panel rows so the TUI uses visible viewport height instead of leaving large blank gaps.
+
+Decision:
 TUI mode is read-only and non-interactive by design.
 Context:
 This monitor should behave as a live status display, not an action surface.

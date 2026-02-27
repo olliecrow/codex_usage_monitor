@@ -265,12 +265,20 @@ func (m Model) renderBody() string {
 
 	metaLines := []string{}
 	maxMetaWidth := max(8, contentWidth-4)
+	windowsHeight := lipgloss.Height(windowsBlock)
+	panelVerticalOverhead := verticalOverhead(m.styles.panel)
+	statusRows := statusRowsForLayout(m.height, windowsHeight, panelVerticalOverhead)
+	visibleStatusRows := min(4, statusRows)
+
 	metaLines = append(metaLines, m.renderAccountsLine(maxMetaWidth))
 	metaLines = append(metaLines, m.renderObservedHeaderLine("five-hour tokens", m.summary.ObservedWindow5h, m.summary.ObservedTokens5h))
 	metaLines = append(metaLines, m.renderObservedBreakdownLinesFixed(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)...)
 	metaLines = append(metaLines, m.renderObservedHeaderLine("weekly tokens", m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly))
 	metaLines = append(metaLines, m.renderObservedBreakdownLinesFixed(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)...)
-	metaLines = append(metaLines, m.renderStatusLinesFixed(statusRowsForViewport(m.height))...)
+	metaLines = append(metaLines, m.renderStatusLinesFixed(visibleStatusRows)...)
+	for i := 0; i < statusRows-visibleStatusRows; i++ {
+		metaLines = append(metaLines, "")
+	}
 	for i := range metaLines {
 		metaLines[i] = ansi.Truncate(metaLines[i], maxMetaWidth, "...")
 	}
@@ -531,17 +539,22 @@ func (m Model) diagnosticsStatusLine() statusLine {
 	return statusLine{level: "status", name: "source + diagnostics", value: source}
 }
 
-func statusRowsForViewport(height int) int {
-	switch {
-	case height >= 40:
-		return 4
-	case height >= 30:
-		return 3
-	case height >= 22:
-		return 2
-	default:
+func statusRowsForLayout(viewportHeight, windowsBlockHeight, panelVerticalOverhead int) int {
+	bodyTargetHeight := max(1, viewportHeight-3) // header + spacer + exit hint
+	metaTargetHeight := bodyTargetHeight - windowsBlockHeight
+	if metaTargetHeight < panelVerticalOverhead+1 {
+		metaTargetHeight = panelVerticalOverhead + 1
+	}
+	rows := metaTargetHeight - panelVerticalOverhead - observedMetaBaseLineCount()
+	if rows < 1 {
 		return 1
 	}
+	return rows
+}
+
+func observedMetaBaseLineCount() int {
+	// accounts line + two observed headers + two fixed 5-line breakdown blocks.
+	return 1 + 1 + 5 + 1 + 5
 }
 
 func percentStyle(percent int, styles styles) lipgloss.Style {
@@ -734,6 +747,16 @@ func horizontalOverhead(style lipgloss.Style) int {
 	// Probe with a stable non-trivial width to avoid edge-case minimum sizing.
 	const probeWidth = 40
 	overhead := lipgloss.Width(style.Width(probeWidth).Render("")) - probeWidth
+	if overhead < 0 {
+		return 0
+	}
+	return overhead
+}
+
+func verticalOverhead(style lipgloss.Style) int {
+	// Probe with a stable non-trivial height to avoid edge-case minimum sizing.
+	const probeHeight = 20
+	overhead := lipgloss.Height(style.Height(probeHeight).Render("")) - probeHeight
 	if overhead < 0 {
 		return 0
 	}

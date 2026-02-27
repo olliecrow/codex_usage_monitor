@@ -198,8 +198,8 @@ func TestStatusSectionFixedRowsAcrossCounts(t *testing.T) {
 	m.summary.Warnings = nil
 	base := m.View()
 	baseStatusLines := countStatusRows(base)
-	if baseStatusLines != statusRowsForViewport(m.height) {
-		t.Fatalf("expected fixed status rows for viewport")
+	if baseStatusLines < 1 {
+		t.Fatalf("expected status lines in output")
 	}
 
 	m.summary.Warnings = []string{
@@ -214,11 +214,18 @@ func TestStatusSectionFixedRowsAcrossCounts(t *testing.T) {
 	if withStatusLines != baseStatusLines {
 		t.Fatalf("expected status section row count to remain fixed")
 	}
-	if !strings.Contains(withWarnings, "warning [more checks]: +2 hidden") {
-		t.Fatalf("expected hidden-check overflow indicator in fixed status section")
-	}
 	if !strings.Contains(withWarnings, "status [active windows]:") {
 		t.Fatalf("expected descriptive status check labels")
+	}
+	if strings.Contains(withWarnings, "warning [more checks]:") {
+		t.Fatalf("did not expect hidden-check overflow for roomy viewport")
+	}
+}
+
+func TestStatusRowsForLayoutExpandsInTallViewport(t *testing.T) {
+	rows := statusRowsForLayout(46, 6, 2)
+	if rows <= 4 {
+		t.Fatalf("expected status rows to expand beyond visible checks in tall viewport, got %d", rows)
 	}
 }
 
