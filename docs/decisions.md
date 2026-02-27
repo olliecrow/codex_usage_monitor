@@ -124,16 +124,47 @@ Enforcement:
 - Default to periodic polling with explicit interval/timeout flags.
 
 Decision:
-Multi-account scope.
+Monitor-owned multi-account support.
 Context:
-Project should stay simple at launch.
+Users may actively use multiple Codex subscription accounts and need one combined monitoring surface without coupling to other tooling.
 Rationale:
-Current Codex auth behavior is effectively single-account oriented.
+Auto-detecting codex homes from local system files gives low-setup multi-account support for open-source users, while an optional local registry remains available for explicit overrides.
 Trade-offs:
-Multi-account users need a future release.
+Adds discovery logic and per-account refresh loops; generic filesystem scanning is broader than a single fixed path.
 Enforcement:
-- Supports one active account.
-- Keep architecture ready for future multi-account extension.
+- Account discovery uses local codex-home signals (`auth.json`, `sessions`, `archived_sessions`) from system paths, not another project's metadata.
+- Optional account list can be loaded from `~/.codex-usage-monitor/accounts.json` (or override env var).
+- Account list is refreshed while running so account add/remove/sign-in changes are picked up.
+- Duplicate account homes are deduplicated.
+
+Decision:
+Observed token totals are estimates with explicit availability state.
+Context:
+Subscription quota endpoints expose reliable window percentages but do not provide a direct authoritative total-token counter for these windows.
+Rationale:
+Local `token_count` events provide useful approximations for recent usage. A single summed view is easier to read if duplicate identities are deduplicated to avoid double counting.
+Trade-offs:
+Estimates may miss usage from other machines or contexts and can be unavailable for invalid/unreadable homes.
+Enforcement:
+- Compute rolling 5-hour and weekly observed-token totals from local `token_count` events.
+- Prefer cumulative token deltas for estimation to reduce duplicate-event overcount risk.
+- Mark per-account observed tokens as `estimated` or `unavailable` internally.
+- Mark overall estimate status as `partial` when one or more accounts are unavailable.
+- Keep showing aggregate totals from available accounts when one account is unavailable.
+- Present one aggregate observed-token total across accounts in UI output.
+- Deduplicate duplicate account identities using max-observed merge before aggregate summation.
+
+Decision:
+Top-level window cards should prioritize risk visibility in multi-account mode.
+Context:
+There is no single authoritative aggregate quota percentage across independent accounts.
+Rationale:
+Showing the highest-pressure account in the top cards gives a conservative at-a-glance signal while detailed rows remain per-account.
+Trade-offs:
+Top cards are not an aggregate; users should treat them as the highest-pressure account view.
+Enforcement:
+- In multi-account mode, top 5-hour and weekly cards are sourced from the account with highest weekly usage (then highest 5-hour usage as tie-break).
+- Expose which account the window cards are sourced from.
 
 Decision:
 Ship a doctor command.

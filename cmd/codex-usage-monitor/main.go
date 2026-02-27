@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func runSnapshot(args []string) int {
 		return 2
 	}
 
-	fetcher := usage.NewDefaultFetcher()
+	fetcher := usage.NewSnapshotFetcher()
 	defer fetcher.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -121,7 +122,7 @@ func runDoctor(args []string) int {
 func runTUI(args []string) int {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	interval := fs.Duration("interval", 15*time.Second, "poll interval")
+	interval := fs.Duration("interval", 60*time.Second, "poll interval")
 	timeout := fs.Duration("timeout", 10*time.Second, "per-poll fetch timeout")
 	noColor := fs.Bool("no-color", false, "disable color styling")
 	noAltScreen := fs.Bool("no-alt-screen", false, "disable alternate screen mode")
@@ -162,8 +163,8 @@ func runTUI(args []string) int {
 }
 
 func printSnapshotHuman(out *usage.Summary) {
-	fmt.Printf("source: %s\n", out.Source)
-	fmt.Printf("plan: %s\n", out.PlanType)
+	fmt.Printf("data source: %s\n", out.Source)
+	fmt.Printf("subscription plan: %s\n", out.PlanType)
 	if out.AccountEmail != "" {
 		fmt.Printf("account: %s\n", out.AccountEmail)
 	}
@@ -173,7 +174,7 @@ func printSnapshotHuman(out *usage.Summary) {
 	if out.UserID != "" {
 		fmt.Printf("user id: %s\n", out.UserID)
 	}
-	fmt.Printf("5h window: %d%% used", out.PrimaryWindow.UsedPercent)
+	fmt.Printf("five-hour window: %d%% used", out.PrimaryWindow.UsedPercent)
 	if out.PrimaryWindow.ResetsAt != nil {
 		fmt.Printf(", resets at %s", out.PrimaryWindow.ResetsAt.Format(time.RFC3339))
 	}
@@ -193,9 +194,79 @@ func printSnapshotHuman(out *usage.Summary) {
 	if out.AdditionalLimitCount > 0 {
 		fmt.Printf("additional limits: %d\n", out.AdditionalLimitCount)
 	}
+	if out.TotalAccounts > 0 {
+		fmt.Printf("accounts: %d detected, %d reachable\n", out.TotalAccounts, out.SuccessfulAccounts)
+	}
+	if out.WindowAccountLabel != "" {
+		fmt.Printf("window account: %s\n", out.WindowAccountLabel)
+	}
+	if out.ObservedTokensStatus != "" {
+		fmt.Printf("observed token estimate status: %s\n", out.ObservedTokensStatus)
+		fmt.Printf("five-hour tokens (sum): %s\n", formatObservedWindowShort(out.ObservedWindow5h, out.ObservedTokens5h))
+		if split := formatObservedWindowSplit(out.ObservedWindow5h); split != "" {
+			fmt.Printf("  split: %s\n", split)
+		}
+		fmt.Printf("weekly tokens (sum): %s\n", formatObservedWindowShort(out.ObservedWindowWeekly, out.ObservedTokensWeekly))
+		if split := formatObservedWindowSplit(out.ObservedWindowWeekly); split != "" {
+			fmt.Printf("  split: %s\n", split)
+		}
+		if note := strings.TrimSpace(out.ObservedTokensNote); note != "" {
+			fmt.Printf("  %s\n", note)
+		}
+	}
 	for _, warning := range out.Warnings {
 		fmt.Printf("warning: %s\n", warning)
 	}
+}
+
+func formatObservedWindowShort(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) string {
+	if win == nil {
+		if fallbackTotal == nil {
+			return "n/a"
+		}
+		return formatCompactCount(*fallbackTotal)
+	}
+	return formatCompactCount(win.Total)
+}
+
+func formatObservedWindowSplit(win *usage.ObservedTokenBreakdown) string {
+	if win == nil || !win.HasSplit {
+		return ""
+	}
+	parts := []string{
+		"input " + formatCompactCount(win.Input),
+		"cached input " + formatCompactCount(win.CachedInput),
+		"output " + formatCompactCount(win.Output),
+	}
+	if win.ReasoningOutput > 0 {
+		parts = append(parts, "reasoning "+formatCompactCount(win.ReasoningOutput))
+	}
+	if win.HasCachedOutput && win.CachedOutput > 0 {
+		parts = append(parts, "cached output "+formatCompactCount(win.CachedOutput))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func formatCompactCount(v int64) string {
+	sign := ""
+	if v < 0 {
+		sign = "-"
+		v = -v
+	}
+	if v < 1000 {
+		return fmt.Sprintf("%s%d", sign, v)
+	}
+
+	units := []string{"", "k", "m", "b", "t"}
+	value := float64(v)
+	unitIndex := 0
+	for value >= 1000 && unitIndex < len(units)-1 {
+		value /= 1000
+		unitIndex++
+	}
+
+	rounded := int64(math.Round(value))
+	return fmt.Sprintf("%s%d%s", sign, rounded, units[unitIndex])
 }
 
 func printDoctorHuman(report usage.DoctorReport) {
@@ -229,7 +300,7 @@ func printRootUsage() {
 	fmt.Println("  --timeout 20s")
 	fmt.Println()
 	fmt.Println("tui flags:")
-	fmt.Println("  --interval 15s")
+	fmt.Println("  --interval 60s")
 	fmt.Println("  --timeout 10s")
 	fmt.Println("  --no-color")
 	fmt.Println("  --no-alt-screen")

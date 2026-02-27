@@ -60,24 +60,29 @@ func TestNarrowViewStillRendersCoreFields(t *testing.T) {
 	m.width = 42
 	m.height = 14
 	out := m.View()
-	if !strings.Contains(out, "5h window") {
-		t.Fatalf("expected 5h section in output")
+	if !strings.Contains(out, "five-hour window") {
+		t.Fatalf("expected five-hour section in output")
 	}
 	if !strings.Contains(out, "weekly window") {
 		t.Fatalf("expected weekly section in output")
 	}
 }
 
-func TestViewRendersAccountMetadataWhenAvailable(t *testing.T) {
+func TestViewRendersAggregatedTokenSection(t *testing.T) {
 	m := seededModel()
 	m.width = 100
 	m.height = 26
+	total5h := int64(120000)
+	total1w := int64(450000)
+	m.summary.ObservedTokensStatus = "estimated"
+	m.summary.ObservedTokens5h = &total5h
+	m.summary.ObservedTokensWeekly = &total1w
 	out := m.View()
-	if !strings.Contains(out, "account:") {
-		t.Fatalf("expected account metadata in output")
+	if !strings.Contains(out, "five-hour tokens (sum):") {
+		t.Fatalf("expected aggregated five-hour token line in output")
 	}
-	if !strings.Contains(out, "me@example.com") {
-		t.Fatalf("expected account email in output")
+	if !strings.Contains(out, "weekly tokens (sum):") {
+		t.Fatalf("expected aggregated weekly token line in output")
 	}
 }
 

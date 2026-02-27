@@ -19,11 +19,18 @@ const (
 
 type OAuthSource struct {
 	httpClient *http.Client
+	codexHome  string
 }
 
 func NewOAuthSource() *OAuthSource {
+	home, _ := defaultCodexHome()
+	return NewOAuthSourceForHome(home)
+}
+
+func NewOAuthSourceForHome(codexHome string) *OAuthSource {
 	return &OAuthSource{
 		httpClient: &http.Client{Timeout: 8 * time.Second},
+		codexHome:  strings.TrimSpace(codexHome),
 	}
 }
 
@@ -32,7 +39,7 @@ func (s *OAuthSource) Name() string {
 }
 
 func (s *OAuthSource) Fetch(ctx context.Context) (*Summary, error) {
-	authPath, err := findAuthJSONPath()
+	authPath, err := findAuthJSONPathForHome(s.codexHome)
 	if err != nil {
 		return nil, err
 	}
@@ -146,23 +153,22 @@ type authFilePayload struct {
 }
 
 func findAuthJSONPath() (string, error) {
-	if codexHome := os.Getenv("CODEX_HOME"); strings.TrimSpace(codexHome) != "" {
+	home, err := defaultCodexHome()
+	if err != nil {
+		return "", err
+	}
+	return findAuthJSONPathForHome(home)
+}
+
+func findAuthJSONPathForHome(codexHome string) (string, error) {
+	if strings.TrimSpace(codexHome) != "" {
 		p := filepath.Join(codexHome, "auth.json")
 		if fileExists(p) {
 			return p, nil
 		}
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("find home directory: %w", err)
-	}
-	defaultPath := filepath.Join(home, ".codex", "auth.json")
-	if fileExists(defaultPath) {
-		return defaultPath, nil
-	}
-
-	return "", errors.New("auth.json not found in CODEX_HOME or ~/.codex")
+	return "", fmt.Errorf("auth.json not found in %s", filepath.Join(codexHome, "auth.json"))
 }
 
 func readAccessToken(path string) (string, error) {

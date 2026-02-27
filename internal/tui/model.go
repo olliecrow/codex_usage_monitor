@@ -78,7 +78,7 @@ type fetchResultMsg struct {
 }
 
 const (
-	defaultInterval = 15 * time.Second
+	defaultInterval = 60 * time.Second
 	defaultTimeout  = 10 * time.Second
 )
 
@@ -248,35 +248,38 @@ func (m Model) renderBody() string {
 		panelWidth := (contentWidth - 1) / 2
 		leftPanelWidth = panelWidth
 		rightPanelWidth = panelWidth
-		leftPanel := m.renderWindowPanel("5h window", m.summary.PrimaryWindow, leftPanelWidth)
+		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
 		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
 		windowsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel)
 	} else {
-		leftPanel := m.renderWindowPanel("5h window", m.summary.PrimaryWindow, leftPanelWidth)
+		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
 		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
 		windowsBlock = lipgloss.JoinVertical(lipgloss.Left, leftPanel, "", rightPanel)
 	}
 
-	metaLines := []string{
-		m.styles.label.Render("source: ") + m.styles.value.Render(m.summary.Source),
-		m.styles.label.Render("plan: ") + m.styles.value.Render(m.summary.PlanType),
-		m.styles.label.Render("fetched: ") + m.styles.value.Render(m.summary.FetchedAt.Format(time.RFC3339)),
-		m.styles.label.Render("fetch duration: ") + m.styles.value.Render(m.lastFetchDuration.Round(time.Millisecond).String()),
-	}
+	metaLines := []string{}
 	if !m.lastSuccessAt.IsZero() {
-		metaLines = append(metaLines, m.styles.label.Render("snapshot age: ")+m.styles.value.Render(humanDuration(m.now.Sub(m.lastSuccessAt))))
+		metaLines = append(metaLines, m.styles.label.Render("updated: ")+m.styles.value.Render(humanDuration(m.now.Sub(m.lastSuccessAt))+" ago"))
 	}
-	if m.summary.AccountEmail != "" {
-		metaLines = append(metaLines, m.styles.label.Render("account: ")+m.styles.value.Render(m.summary.AccountEmail))
+	if m.summary.TotalAccounts > 0 {
+		metaLines = append(metaLines, m.styles.label.Render("accounts: ")+m.styles.value.Render(fmt.Sprintf("%d detected, %d reachable", m.summary.TotalAccounts, m.summary.SuccessfulAccounts)))
 	}
-	if m.summary.AccountID != "" {
-		metaLines = append(metaLines, m.styles.label.Render("account id: ")+m.styles.value.Render(m.summary.AccountID))
+	if m.summary.WindowAccountLabel != "" {
+		metaLines = append(metaLines, m.styles.label.Render("window cards account: ")+m.styles.value.Render(m.summary.WindowAccountLabel))
 	}
-	if m.summary.UserID != "" {
-		metaLines = append(metaLines, m.styles.label.Render("user id: ")+m.styles.value.Render(m.summary.UserID))
-	}
-	if m.summary.AdditionalLimitCount > 0 {
-		metaLines = append(metaLines, m.styles.label.Render("additional limits: ")+m.styles.value.Render(fmt.Sprintf("%d", m.summary.AdditionalLimitCount)))
+	if m.summary.ObservedTokensStatus != "" {
+		metaLines = append(metaLines, m.styles.label.Render("token estimate: ")+m.styles.value.Render(m.summary.ObservedTokensStatus))
+		metaLines = append(metaLines, m.styles.label.Render("five-hour tokens (sum): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)))
+		if split := formatObservedWindowSplit(m.summary.ObservedWindow5h); split != "" {
+			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
+		}
+		metaLines = append(metaLines, m.styles.label.Render("weekly tokens (sum): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)))
+		if split := formatObservedWindowSplit(m.summary.ObservedWindowWeekly); split != "" {
+			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
+		}
+		if note := strings.TrimSpace(m.summary.ObservedTokensNote); note != "" {
+			metaLines = append(metaLines, m.styles.dim.Render("  "+note))
+		}
 	}
 	if len(m.summary.Warnings) > 0 {
 		for _, w := range m.summary.Warnings {
@@ -285,6 +288,9 @@ func (m Model) renderBody() string {
 	}
 	if m.lastError != "" {
 		metaLines = append(metaLines, m.styles.error.Render("last error: "+m.lastError))
+	}
+	for i := range metaLines {
+		metaLines[i] = truncateRunes(metaLines[i], max(8, contentWidth-4))
 	}
 
 	metaPanel := m.styles.panel.Width(contentWidth).Render(strings.Join(metaLines, "\n"))
@@ -348,6 +354,53 @@ func percentBar(percent int, width int) string {
 		filled = width
 	}
 	return "[" + strings.Repeat("=", filled) + strings.Repeat(".", width-filled) + "]"
+}
+
+func formatObservedWindowCompact(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) string {
+	if win == nil {
+		if fallbackTotal == nil {
+			return "n/a"
+		}
+		return compactCount(*fallbackTotal)
+	}
+	return compactCount(win.Total)
+}
+
+func formatObservedWindowSplit(win *usage.ObservedTokenBreakdown) string {
+	if win == nil || !win.HasSplit {
+		return ""
+	}
+	parts := []string{
+		"input " + compactCount(win.Input),
+		"cached input " + compactCount(win.CachedInput),
+		"output " + compactCount(win.Output),
+	}
+	if win.ReasoningOutput > 0 {
+		parts = append(parts, "reasoning "+compactCount(win.ReasoningOutput))
+	}
+	if win.HasCachedOutput && win.CachedOutput > 0 {
+		parts = append(parts, "cached output "+compactCount(win.CachedOutput))
+	}
+	return strings.Join(parts, " | ")
+}
+
+func compactCount(v int64) string {
+	sign := ""
+	if v < 0 {
+		sign = "-"
+		v = -v
+	}
+	if v < 1000 {
+		return fmt.Sprintf("%s%d", sign, v)
+	}
+	units := []string{"", "k", "m", "b", "t"}
+	value := float64(v)
+	unitIndex := 0
+	for value >= 1000 && unitIndex < len(units)-1 {
+		value /= 1000
+		unitIndex++
+	}
+	return fmt.Sprintf("%s%d%s", sign, int(math.Round(value)), units[unitIndex])
 }
 
 func pollCmd(interval time.Duration) tea.Cmd {

@@ -4,11 +4,12 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -53,12 +54,18 @@ type AppServerSource struct {
 	reqMu   sync.Mutex
 	session *appServerSession
 
-	authFingerprint string
+	codexHome         string
+	authFingerprint   string
 	authFingerprintFn func() (string, error)
 }
 
 func NewAppServerSource() *AppServerSource {
-	return &AppServerSource{}
+	home, _ := defaultCodexHome()
+	return NewAppServerSourceForHome(home)
+}
+
+func NewAppServerSourceForHome(codexHome string) *AppServerSource {
+	return &AppServerSource{codexHome: strings.TrimSpace(codexHome)}
 }
 
 func (s *AppServerSource) Name() string {
@@ -113,7 +120,7 @@ func (s *AppServerSource) Close() error {
 func (s *AppServerSource) ensureSession(ctx context.Context) (*appServerSession, error) {
 	s.mu.Lock()
 	if s.session == nil {
-		s.session = newAppServerSession()
+		s.session = newAppServerSession(s.codexHome)
 	}
 	session := s.session
 	s.mu.Unlock()
@@ -141,7 +148,9 @@ func (s *AppServerSource) resetSession() {
 func (s *AppServerSource) refreshAuthState() string {
 	fingerprintFn := s.authFingerprintFn
 	if fingerprintFn == nil {
-		fingerprintFn = currentAuthFingerprint
+		fingerprintFn = func() (string, error) {
+			return currentAuthFingerprintForHome(s.codexHome)
+		}
 	}
 
 	fingerprint, err := fingerprintFn()
@@ -167,8 +176,8 @@ func (s *AppServerSource) refreshAuthState() string {
 	return "auth state changed; restarted app-server session"
 }
 
-func currentAuthFingerprint() (string, error) {
-	authPath, err := findAuthJSONPath()
+func currentAuthFingerprintForHome(codexHome string) (string, error) {
+	authPath, err := findAuthJSONPathForHome(codexHome)
 	if err != nil {
 		return "", err
 	}
@@ -194,6 +203,8 @@ type appServerSession struct {
 
 	done    chan struct{}
 	doneErr error
+
+	codexHome string
 }
 
 type accountReadResultRaw struct {
@@ -205,9 +216,10 @@ type accountReadAccountRaw struct {
 	Email string `json:"email"`
 }
 
-func newAppServerSession() *appServerSession {
+func newAppServerSession(codexHome string) *appServerSession {
 	return &appServerSession{
-		pending: make(map[int]chan rpcMessage),
+		pending:   make(map[int]chan rpcMessage),
+		codexHome: strings.TrimSpace(codexHome),
 	}
 }
 
@@ -225,6 +237,11 @@ func (s *appServerSession) ensureStarted() error {
 	}
 
 	cmd := exec.Command("codex", "-s", "read-only", "-a", "untrusted", "app-server")
+	env := os.Environ()
+	if s.codexHome != "" {
+		env = upsertEnvVar(env, "CODEX_HOME", s.codexHome)
+	}
+	cmd.Env = env
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -469,4 +486,15 @@ func (s *appServerSession) doneErrOrDefault() error {
 
 func drain(r io.Reader) {
 	_, _ = io.Copy(io.Discard, r)
+}
+
+func upsertEnvVar(env []string, key, value string) []string {
+	prefix := key + "="
+	for i := range env {
+		if strings.HasPrefix(env[i], prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
