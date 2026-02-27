@@ -269,16 +269,13 @@ func (m Model) renderBody() string {
 	}
 	if m.summary.ObservedTokensStatus != "" {
 		metaLines = append(metaLines, m.styles.label.Render("token estimate: ")+m.styles.value.Render(m.summary.ObservedTokensStatus))
-		metaLines = append(metaLines, m.styles.label.Render("five-hour tokens (sum): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)))
+		metaLines = append(metaLines, m.styles.label.Render("five-hour tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)))
 		if split := formatObservedWindowSplit(m.summary.ObservedWindow5h); split != "" {
 			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
 		}
-		metaLines = append(metaLines, m.styles.label.Render("weekly tokens (sum): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)))
+		metaLines = append(metaLines, m.styles.label.Render("weekly tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)))
 		if split := formatObservedWindowSplit(m.summary.ObservedWindowWeekly); split != "" {
 			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
-		}
-		if note := strings.TrimSpace(m.summary.ObservedTokensNote); note != "" {
-			metaLines = append(metaLines, m.styles.dim.Render("  "+note))
 		}
 	}
 	if len(m.summary.Warnings) > 0 {

@@ -78,10 +78,10 @@ func TestViewRendersAggregatedTokenSection(t *testing.T) {
 	m.summary.ObservedTokens5h = &total5h
 	m.summary.ObservedTokensWeekly = &total1w
 	out := m.View()
-	if !strings.Contains(out, "five-hour tokens (sum):") {
+	if !strings.Contains(out, "five-hour tokens (sum across accounts):") {
 		t.Fatalf("expected aggregated five-hour token line in output")
 	}
-	if !strings.Contains(out, "weekly tokens (sum):") {
+	if !strings.Contains(out, "weekly tokens (sum across accounts):") {
 		t.Fatalf("expected aggregated weekly token line in output")
 	}
 }

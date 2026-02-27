@@ -202,16 +202,13 @@ func printSnapshotHuman(out *usage.Summary) {
 	}
 	if out.ObservedTokensStatus != "" {
 		fmt.Printf("observed token estimate status: %s\n", out.ObservedTokensStatus)
-		fmt.Printf("five-hour tokens (sum): %s\n", formatObservedWindowShort(out.ObservedWindow5h, out.ObservedTokens5h))
+		fmt.Printf("five-hour tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindow5h, out.ObservedTokens5h))
 		if split := formatObservedWindowSplit(out.ObservedWindow5h); split != "" {
 			fmt.Printf("  split: %s\n", split)
 		}
-		fmt.Printf("weekly tokens (sum): %s\n", formatObservedWindowShort(out.ObservedWindowWeekly, out.ObservedTokensWeekly))
+		fmt.Printf("weekly tokens (sum across accounts): %s\n", formatObservedWindowShort(out.ObservedWindowWeekly, out.ObservedTokensWeekly))
 		if split := formatObservedWindowSplit(out.ObservedWindowWeekly); split != "" {
 			fmt.Printf("  split: %s\n", split)
-		}
-		if note := strings.TrimSpace(out.ObservedTokensNote); note != "" {
-			fmt.Printf("  %s\n", note)
 		}
 	}
 	for _, warning := range out.Warnings {

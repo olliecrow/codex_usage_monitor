@@ -101,7 +101,6 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	unavailableObservedCount := 0
 	var observedAnon observedWindowPair
 	seenObservedByIdentity := map[string]observedWindowPair{}
-	duplicateIdentityDetected := false
 
 	results := f.fetchAccountsConcurrent(ctx, now)
 	for _, result := range results {
@@ -133,11 +132,8 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 			if identity == "" {
 				observedAnon = addObservedPairs(observedAnon, pair)
 			} else {
-				prev, seen := seenObservedByIdentity[identity]
+				prev := seenObservedByIdentity[identity]
 				next := mergeObservedPairMax(prev, pair)
-				if seen {
-					duplicateIdentityDetected = true
-				}
 				seenObservedByIdentity[identity] = next
 			}
 		}
@@ -174,13 +170,10 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		out.ObservedWindowWeekly = &observedTotal.WindowWeekly
 		out.ObservedTokens5h = int64Ptr(observedTotal.Window5h.Total)
 		out.ObservedTokensWeekly = int64Ptr(observedTotal.WindowWeekly.Total)
-		out.ObservedTokensNote = "summed across all detected accounts"
+		out.ObservedTokensNote = "sum across accounts"
 		if unavailableObservedCount > 0 {
 			out.ObservedTokensStatus = observedTokensStatusPartial
-			out.ObservedTokensNote = "partial sum across detected accounts; some account homes unavailable"
-		}
-		if duplicateIdentityDetected {
-			out.Warnings = append(out.Warnings, "duplicate account identity detected; token totals were deduplicated to avoid double counting")
+			out.ObservedTokensNote = "partial sum across accounts; some account homes unavailable"
 		}
 	} else if unavailableObservedCount > 0 {
 		out.ObservedTokensStatus = observedTokensStatusUnavailable
