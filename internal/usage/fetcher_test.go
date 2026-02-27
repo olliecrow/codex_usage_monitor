@@ -3,6 +3,9 @@ package usage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +318,12 @@ func TestFetcherDeduplicatesObservedTotalsByIdentity(t *testing.T) {
 	if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != 200 {
 		t.Fatalf("expected deduped weekly total by identity, got %+v", out.ObservedTokensWeekly)
 	}
+	if out.TotalAccounts != 1 || out.SuccessfulAccounts != 1 {
+		t.Fatalf("expected deduped identity counts 1/1, got %d/%d", out.SuccessfulAccounts, out.TotalAccounts)
+	}
+	if len(out.Accounts) != 1 {
+		t.Fatalf("expected deduped account row count 1, got %d", len(out.Accounts))
+	}
 }
 
 func TestReplaceAccountFetchersClosesRemovedHomes(t *testing.T) {
@@ -389,5 +398,424 @@ func TestRefreshAccountsReloadsAndReusesExistingHomes(t *testing.T) {
 	}
 	if alpha.primary != reusedPrimary {
 		t.Fatalf("expected existing source to be reused for unchanged home")
+	}
+}
+
+func TestFetcherDeduplicatesByAccountIDWhenEmailMissing(t *testing.T) {
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account: MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary: &fakeSource{name: "primary-a", out: &Summary{
+					AccountID:       "same-account-id",
+					PrimaryWindow:   WindowSummary{UsedPercent: 10},
+					SecondaryWindow: WindowSummary{UsedPercent: 20},
+				}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account: MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary: &fakeSource{name: "primary-b", out: &Summary{
+					AccountID:       "same-account-id",
+					PrimaryWindow:   WindowSummary{UsedPercent: 20},
+					SecondaryWindow: WindowSummary{UsedPercent: 30},
+				}},
+				fallback: &fakeSource{name: "fallback-b"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {
+					Window5h:     ObservedTokenBreakdown{Total: 100},
+					WindowWeekly: ObservedTokenBreakdown{Total: 200},
+					Status:       observedTokensStatusEstimated,
+				},
+				"/b": {
+					Window5h:     ObservedTokenBreakdown{Total: 150},
+					WindowWeekly: ObservedTokenBreakdown{Total: 180},
+					Status:       observedTokensStatusEstimated,
+				},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ObservedTokens5h == nil || *out.ObservedTokens5h != 150 {
+		t.Fatalf("expected totals to dedupe by account id, got %+v", out.ObservedTokens5h)
+	}
+	if out.TotalAccounts != 1 || out.SuccessfulAccounts != 1 {
+		t.Fatalf("expected deduped identity counts 1/1, got %d/%d", out.SuccessfulAccounts, out.TotalAccounts)
+	}
+	if len(out.Accounts) != 1 {
+		t.Fatalf("expected deduped account row count 1, got %d", len(out.Accounts))
+	}
+}
+
+func TestFetcherUsesActiveHomeIdentityForCurrentAccount(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "/b")
+
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary:  &fakeSource{name: "primary-a", out: &Summary{AccountEmail: "a@example.com", PrimaryWindow: WindowSummary{UsedPercent: 10}, SecondaryWindow: WindowSummary{UsedPercent: 20}}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary:  &fakeSource{name: "primary-b", out: &Summary{AccountEmail: "b@example.com", PrimaryWindow: WindowSummary{UsedPercent: 15}, SecondaryWindow: WindowSummary{UsedPercent: 19}}},
+				fallback: &fakeSource{name: "fallback-b"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {Window5h: ObservedTokenBreakdown{Total: 1}, WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
+				"/b": {Window5h: ObservedTokenBreakdown{Total: 3}, WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.AccountEmail != "b@example.com" {
+		t.Fatalf("expected current account from active CODEX_HOME, got %q", out.AccountEmail)
+	}
+	if out.WindowAccountLabel != "b" {
+		t.Fatalf("expected window account to follow active CODEX_HOME, got %q", out.WindowAccountLabel)
+	}
+	if out.PrimaryWindow.UsedPercent != 15 || out.SecondaryWindow.UsedPercent != 19 {
+		t.Fatalf("expected window cards to reflect active account limits")
+	}
+}
+
+func TestFetcherFallsBackToHighestPressureWhenActiveFetchFails(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "/b")
+
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary:  &fakeSource{name: "primary-a", out: &Summary{AccountEmail: "a@example.com", PrimaryWindow: WindowSummary{UsedPercent: 10}, SecondaryWindow: WindowSummary{UsedPercent: 20}}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary:  &fakeSource{name: "primary-b", err: errors.New("boom")},
+				fallback: &fakeSource{name: "fallback-b", err: errors.New("fallback boom")},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {Window5h: ObservedTokenBreakdown{Total: 1}, WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
+				"/b": {Window5h: ObservedTokenBreakdown{Total: 3}, WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.AccountEmail != "a@example.com" {
+		t.Fatalf("expected fallback current account identity from successful summary, got %q", out.AccountEmail)
+	}
+	if out.WindowAccountLabel != "a" {
+		t.Fatalf("expected window account label from highest-pressure successful account, got %q", out.WindowAccountLabel)
+	}
+}
+
+func TestFetcherUpdatesWindowCardsWhenActiveHomeSwitches(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary:  &fakeSource{name: "primary-a", out: &Summary{AccountEmail: "a@example.com", PrimaryWindow: WindowSummary{UsedPercent: 11}, SecondaryWindow: WindowSummary{UsedPercent: 12}}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary:  &fakeSource{name: "primary-b", out: &Summary{AccountEmail: "b@example.com", PrimaryWindow: WindowSummary{UsedPercent: 65}, SecondaryWindow: WindowSummary{UsedPercent: 99}}},
+				fallback: &fakeSource{name: "fallback-b"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {Window5h: ObservedTokenBreakdown{Total: 1}, WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
+				"/b": {Window5h: ObservedTokenBreakdown{Total: 3}, WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
+			},
+		},
+	}
+
+	t.Setenv("CODEX_HOME", "/a")
+	first, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected first fetch error: %v", err)
+	}
+	if first.AccountEmail != "a@example.com" || first.WindowAccountLabel != "a" {
+		t.Fatalf("expected first fetch to follow account a, got email=%q label=%q", first.AccountEmail, first.WindowAccountLabel)
+	}
+	if first.SecondaryWindow.UsedPercent != 12 {
+		t.Fatalf("expected first window values from account a")
+	}
+
+	t.Setenv("CODEX_HOME", "/b")
+	second, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected second fetch error: %v", err)
+	}
+	if second.AccountEmail != "b@example.com" || second.WindowAccountLabel != "b" {
+		t.Fatalf("expected second fetch to follow account b, got email=%q label=%q", second.AccountEmail, second.WindowAccountLabel)
+	}
+	if second.SecondaryWindow.UsedPercent != 99 {
+		t.Fatalf("expected second window values from account b")
+	}
+}
+
+func TestFetcherFallsBackToHighestPressureWhenActiveHomeMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CODEX_HOME", "/missing")
+
+	f := &Fetcher{
+		accounts: []accountFetcher{
+			{
+				account:  MonitorAccount{Label: "a", CodexHome: "/a"},
+				primary:  &fakeSource{name: "primary-a", out: &Summary{AccountEmail: "a@example.com", PrimaryWindow: WindowSummary{UsedPercent: 10}, SecondaryWindow: WindowSummary{UsedPercent: 20}}},
+				fallback: &fakeSource{name: "fallback-a"},
+			},
+			{
+				account:  MonitorAccount{Label: "b", CodexHome: "/b"},
+				primary:  &fakeSource{name: "primary-b", out: &Summary{AccountEmail: "b@example.com", PrimaryWindow: WindowSummary{UsedPercent: 25}, SecondaryWindow: WindowSummary{UsedPercent: 70}}},
+				fallback: &fakeSource{name: "fallback-b"},
+			},
+		},
+		observed: fakeEstimator{
+			values: map[string]ObservedTokenEstimate{
+				"/a": {Window5h: ObservedTokenBreakdown{Total: 1}, WindowWeekly: ObservedTokenBreakdown{Total: 2}, Status: observedTokensStatusEstimated},
+				"/b": {Window5h: ObservedTokenBreakdown{Total: 3}, WindowWeekly: ObservedTokenBreakdown{Total: 4}, Status: observedTokensStatusEstimated},
+			},
+		},
+	}
+
+	out, err := f.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.AccountEmail != "b@example.com" {
+		t.Fatalf("expected fallback to highest-pressure account identity, got %q", out.AccountEmail)
+	}
+	if out.WindowAccountLabel != "b" {
+		t.Fatalf("expected fallback window label b, got %q", out.WindowAccountLabel)
+	}
+}
+
+func TestNormalizeHomeConvertsRelativeToAbsolute(t *testing.T) {
+	tmp := t.TempDir()
+	rel := filepath.Join(".", filepath.Base(tmp))
+	cwd, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatalf("resolve cwd: %v", err)
+	}
+	expected := filepath.Clean(filepath.Join(cwd, rel))
+	got := normalizeHome(rel)
+	if got != expected {
+		t.Fatalf("expected normalized home %q, got %q", expected, got)
+	}
+}
+
+func TestFetcherRandomizedSelectionAndCountInvariants(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	rng := rand.New(rand.NewSource(42))
+	identityPool := []struct {
+		email     string
+		accountID string
+		userID    string
+	}{
+		{email: "a@example.com", accountID: "acc-a", userID: "user-a"},
+		{email: "b@example.com", accountID: "acc-b", userID: "user-b"},
+		{email: "", accountID: "acc-c", userID: ""},
+		{email: "", accountID: "", userID: "user-d"},
+		{email: "", accountID: "", userID: ""},
+	}
+
+	for iter := 0; iter < 200; iter++ {
+		accountCount := 2 + rng.Intn(5)
+		homes := make([]string, accountCount)
+		fetchers := make([]accountFetcher, 0, accountCount)
+		observedValues := map[string]ObservedTokenEstimate{}
+		summariesByIndex := make([]*Summary, accountCount)
+
+		for i := 0; i < accountCount; i++ {
+			home := fmt.Sprintf("/h-%d-%d", iter, i)
+			if i > 0 && rng.Intn(4) == 0 {
+				home = homes[rng.Intn(i)]
+			}
+			homes[i] = home
+
+			id := identityPool[rng.Intn(len(identityPool))]
+			primaryWindow := WindowSummary{UsedPercent: rng.Intn(101)}
+			secondaryWindow := WindowSummary{UsedPercent: rng.Intn(101)}
+			summary := &Summary{
+				Source:          "app-server",
+				PlanType:        "pro",
+				AccountEmail:    id.email,
+				AccountID:       id.accountID,
+				UserID:          id.userID,
+				PrimaryWindow:   primaryWindow,
+				SecondaryWindow: secondaryWindow,
+				FetchedAt:       time.Date(2026, 2, 27, 0, 0, i, 0, time.UTC),
+			}
+
+			fail := rng.Intn(5) == 0
+			primary := &fakeSource{name: fmt.Sprintf("p-%d", i), out: summary}
+			fallback := &fakeSource{name: fmt.Sprintf("f-%d", i)}
+			if fail {
+				primary.err = errors.New("boom")
+				fallback.err = errors.New("fallback boom")
+			} else {
+				summariesByIndex[i] = summary
+			}
+
+			observedValues[home] = ObservedTokenEstimate{
+				Status: observedTokensStatusEstimated,
+				Window5h: ObservedTokenBreakdown{
+					Total: int64(100 + rng.Intn(900)),
+				},
+				WindowWeekly: ObservedTokenBreakdown{
+					Total: int64(1000 + rng.Intn(9000)),
+				},
+			}
+
+			fetchers = append(fetchers, accountFetcher{
+				account:  MonitorAccount{Label: fmt.Sprintf("a-%d", i), CodexHome: home},
+				primary:  primary,
+				fallback: fallback,
+			})
+		}
+
+		activeHome := homes[rng.Intn(len(homes))]
+		t.Setenv("CODEX_HOME", activeHome)
+
+		f := &Fetcher{
+			accounts: fetchers,
+			observed: fakeEstimator{values: observedValues},
+		}
+
+		out, err := f.Fetch(context.Background())
+		successCount := 0
+		for _, summary := range summariesByIndex {
+			if summary != nil {
+				successCount++
+			}
+		}
+		if successCount == 0 {
+			if err != nil {
+				t.Fatalf("iter %d: expected observed-only success, got error: %v", iter, err)
+			}
+		} else if err != nil {
+			t.Fatalf("iter %d: unexpected fetch error: %v", iter, err)
+		}
+
+		totalIdentities := map[string]struct{}{}
+		successfulIdentities := map[string]struct{}{}
+		var expectedSelected *Summary
+		var activeSummary *Summary
+		expectedObserved5h := int64(0)
+		expectedObserved1w := int64(0)
+		observedByIdentity := map[string]observedWindowPair{}
+
+		for idx, account := range fetchers {
+			home := account.account.CodexHome
+			summary := summariesByIndex[idx]
+			accountOut := AccountSummary{
+				Label: account.account.Label,
+			}
+			if summary != nil {
+				accountOut.AccountEmail = summary.AccountEmail
+				accountOut.AccountID = summary.AccountID
+				accountOut.UserID = summary.UserID
+				if shouldSelectSummary(expectedSelected, summary) {
+					expectedSelected = summary
+				}
+				if home == activeHome {
+					activeSummary = summary
+				}
+			}
+			key := accountIdentityOrHomeKey(accountOut, home)
+			if key == "" {
+				key = "label:" + account.account.Label
+			}
+			totalIdentities[key] = struct{}{}
+			if summary != nil {
+				successfulIdentities[key] = struct{}{}
+			}
+			observed := observedValues[home]
+			prev := observedByIdentity[key]
+			observedByIdentity[key] = mergeObservedPairMax(prev, observedWindowPair{
+				Window5h:     observed.Window5h,
+				WindowWeekly: observed.WindowWeekly,
+			})
+		}
+		for _, pair := range observedByIdentity {
+			expectedObserved5h += pair.Window5h.Total
+			expectedObserved1w += pair.WindowWeekly.Total
+		}
+
+		if out.TotalAccounts != len(totalIdentities) {
+			t.Fatalf("iter %d: expected total identity count %d, got %d", iter, len(totalIdentities), out.TotalAccounts)
+		}
+		if out.SuccessfulAccounts != len(successfulIdentities) {
+			t.Fatalf("iter %d: expected successful identity count %d, got %d", iter, len(successfulIdentities), out.SuccessfulAccounts)
+		}
+		if len(out.Accounts) != len(totalIdentities) {
+			t.Fatalf("iter %d: expected account row count %d, got %d", iter, len(totalIdentities), len(out.Accounts))
+		}
+		if out.ObservedTokens5h == nil || *out.ObservedTokens5h != expectedObserved5h {
+			t.Fatalf("iter %d: expected observed 5h %d, got %+v", iter, expectedObserved5h, out.ObservedTokens5h)
+		}
+		if out.ObservedTokensWeekly == nil || *out.ObservedTokensWeekly != expectedObserved1w {
+			t.Fatalf("iter %d: expected observed weekly %d, got %+v", iter, expectedObserved1w, out.ObservedTokensWeekly)
+		}
+
+		if activeSummary != nil {
+			if out.AccountEmail != activeSummary.AccountEmail {
+				t.Fatalf("iter %d: expected active account email %q, got %q", iter, activeSummary.AccountEmail, out.AccountEmail)
+			}
+			if out.PrimaryWindow.UsedPercent != activeSummary.PrimaryWindow.UsedPercent ||
+				out.SecondaryWindow.UsedPercent != activeSummary.SecondaryWindow.UsedPercent {
+				t.Fatalf("iter %d: expected active window pair %d/%d, got %d/%d",
+					iter,
+					activeSummary.PrimaryWindow.UsedPercent,
+					activeSummary.SecondaryWindow.UsedPercent,
+					out.PrimaryWindow.UsedPercent,
+					out.SecondaryWindow.UsedPercent,
+				)
+			}
+		} else if expectedSelected != nil {
+			if out.PrimaryWindow.UsedPercent != expectedSelected.PrimaryWindow.UsedPercent ||
+				out.SecondaryWindow.UsedPercent != expectedSelected.SecondaryWindow.UsedPercent {
+				t.Fatalf("iter %d: expected fallback window pair %d/%d, got %d/%d",
+					iter,
+					expectedSelected.PrimaryWindow.UsedPercent,
+					expectedSelected.SecondaryWindow.UsedPercent,
+					out.PrimaryWindow.UsedPercent,
+					out.SecondaryWindow.UsedPercent,
+				)
+			}
+		}
 	}
 }

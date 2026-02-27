@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -77,12 +78,29 @@ func TestViewRendersAggregatedTokenSection(t *testing.T) {
 	m.summary.ObservedTokensStatus = "estimated"
 	m.summary.ObservedTokens5h = &total5h
 	m.summary.ObservedTokensWeekly = &total1w
+	m.summary.ObservedWindow5h = &usage.ObservedTokenBreakdown{
+		Total:       total5h,
+		Input:       100000,
+		CachedInput: 90000,
+		Output:      20000,
+		HasSplit:    true,
+	}
+	m.summary.ObservedWindowWeekly = &usage.ObservedTokenBreakdown{
+		Total:       total1w,
+		Input:       300000,
+		CachedInput: 200000,
+		Output:      150000,
+		HasSplit:    true,
+	}
 	out := m.View()
 	if !strings.Contains(out, "five-hour tokens (sum across accounts):") {
 		t.Fatalf("expected aggregated five-hour token line in output")
 	}
 	if !strings.Contains(out, "weekly tokens (sum across accounts):") {
 		t.Fatalf("expected aggregated weekly token line in output")
+	}
+	if strings.Contains(out, "estimated: ") {
+		t.Fatalf("expected totals-only token display without split lines")
 	}
 }
 
@@ -103,6 +121,90 @@ func TestWindowPanelUsesResetsInLabel(t *testing.T) {
 	out := m.renderBody()
 	if !strings.Contains(out, "resets in:") {
 		t.Fatalf("expected resets in label in window panels")
+	}
+}
+
+func TestWideLayoutPanelsAlignWidths(t *testing.T) {
+	widths := []int{98, 99, 100, 101, 120, 121, 140}
+	heights := []int{18, 24, 32}
+
+	for _, w := range widths {
+		for _, h := range heights {
+			m := seededModel()
+			m.width = w
+			m.height = h
+			body := m.renderBody()
+
+			lines := strings.Split(body, "\n")
+			topLine := ""
+			metaTop := ""
+			for _, line := range lines {
+				if strings.Count(line, "╭") >= 2 && topLine == "" {
+					topLine = line
+					continue
+				}
+				if strings.Count(line, "╭") == 1 {
+					metaTop = line
+				}
+			}
+			if topLine == "" || metaTop == "" {
+				t.Fatalf("expected top and metadata panel border lines for %dx%d", w, h)
+			}
+			topWidth := lipgloss.Width(topLine)
+			metaWidth := lipgloss.Width(metaTop)
+			if topWidth != metaWidth {
+				t.Fatalf("expected aligned widths for %dx%d, got top=%d meta=%d", w, h, topWidth, metaWidth)
+			}
+
+			topRunes := []rune(topLine)
+			firstRight := nthRuneIndex(topRunes, '╮', 1)
+			secondLeft := nthRuneIndex(topRunes, '╭', 2)
+			if firstRight < 0 || secondLeft < 0 || secondLeft <= firstRight {
+				t.Fatalf("expected two top panels for %dx%d", w, h)
+			}
+			gapStart := firstRight + 1
+			gapEnd := secondLeft - 1
+			dividerCenter := (float64(gapStart) + float64(gapEnd)) / 2.0
+			fullCenter := float64(topWidth-1) / 2.0
+			if math.Abs(dividerCenter-fullCenter) > 0.5 {
+				t.Fatalf("expected centered divider for %dx%d, divider=%.1f full=%.1f", w, h, dividerCenter, fullCenter)
+			}
+		}
+	}
+}
+
+func TestHeaderIncludesRefreshBracketOnTopLine(t *testing.T) {
+	m := seededModel()
+	m.width = 100
+	header := m.renderHeader()
+	lines := strings.Split(header, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected single-line header")
+	}
+	if !strings.Contains(lines[0], "[next refresh in ") {
+		t.Fatalf("expected bracketed refresh countdown on header line")
+	}
+	if strings.Contains(lines[0], "interval") {
+		t.Fatalf("did not expect interval label in header")
+	}
+	if lipgloss.Width(lines[0]) > m.width {
+		t.Fatalf("header line exceeded width")
+	}
+}
+
+func TestHeaderRetainsUTCTimestampAtNarrowWidth(t *testing.T) {
+	m := seededModel()
+	m.width = 58
+	header := m.renderHeader()
+	lines := strings.Split(header, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected single-line header")
+	}
+	if !strings.Contains(lines[0], "utc 2026-02-26 15:00:00") {
+		t.Fatalf("expected narrow header to retain utc timestamp, got: %q", lines[0])
+	}
+	if lipgloss.Width(lines[0]) > m.width {
+		t.Fatalf("header line exceeded width")
 	}
 }
 
@@ -127,6 +229,22 @@ func TestViewShowsExitHintAtBottom(t *testing.T) {
 	if strings.Contains(out, "last successful snapshot") {
 		t.Fatalf("did not expect last successful snapshot footer line")
 	}
+}
+
+func nthRuneIndex(runes []rune, target rune, n int) int {
+	if n <= 0 {
+		return -1
+	}
+	count := 0
+	for i, r := range runes {
+		if r == target {
+			count++
+			if count == n {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func seededModel() Model {

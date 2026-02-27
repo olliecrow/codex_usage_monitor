@@ -24,7 +24,7 @@ This project is focused on subscription usage only. It does not track API usage.
 - Estimates observed token usage totals for the last five hours and last week from local `token_count` events.
 - Shows observed token estimates aggregated across detected accounts (with duplicate-identity deduplication safeguards).
 - Keeps the TUI compact: only aggregate token totals are shown in the bottom panel.
-- In multi-account mode, labels which account the top window cards represent.
+- In multi-account mode, top window cards follow the active Codex account (with a fallback to the highest-pressure reachable account if active account fetch fails).
 - Includes a doctor command to check local setup and data source health.
 - Shows account identity metadata in snapshot/json output when available, for example account email.
 - Detects auth-file changes and refreshes app-server session so sign-out/sign-in switches are picked up.

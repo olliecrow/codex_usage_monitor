@@ -114,8 +114,9 @@ func TestLoadMonitorAccountsAutoDiscoversSystemCodexHomes(t *testing.T) {
 	}
 
 	found := false
+	expectedHome := normalizeHome(discoveredHome)
 	for _, account := range accounts {
-		if account.CodexHome == discoveredHome {
+		if account.CodexHome == expectedHome {
 			found = true
 			if account.Label != "work" {
 				t.Fatalf("expected discovered label work, got %q", account.Label)
@@ -124,5 +125,32 @@ func TestLoadMonitorAccountsAutoDiscoversSystemCodexHomes(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected discovered codex home to be included")
+	}
+}
+
+func TestAccountCollectorDeduplicatesSymlinkAndRealHomes(t *testing.T) {
+	tmp := t.TempDir()
+	realHome := filepath.Join(tmp, "profiles", "work", "codex-home")
+	if err := os.MkdirAll(realHome, 0o755); err != nil {
+		t.Fatalf("mkdir real home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realHome, "auth.json"), []byte(`{"tokens":{"access_token":"x"}}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+	symlinkHome := filepath.Join(tmp, "symlink-home")
+	if err := os.Symlink(realHome, symlinkHome); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	collector := newAccountCollector()
+	collector.add("real", realHome, 50, false)
+	collector.add("link", symlinkHome, 60, false)
+
+	accounts := collector.toAccounts()
+	if len(accounts) != 1 {
+		t.Fatalf("expected one deduplicated account, got %d", len(accounts))
+	}
+	if accounts[0].Label != "link" {
+		t.Fatalf("expected higher-priority symlink label to win, got %q", accounts[0].Label)
 	}
 }

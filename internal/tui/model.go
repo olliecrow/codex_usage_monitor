@@ -196,7 +196,7 @@ func (m Model) View() string {
 	body := m.renderBody()
 	exitHint := m.styles.dim.Render("Ctrl+C to exit")
 
-	combined := lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", exitHint)
+	combined := lipgloss.JoinVertical(lipgloss.Left, header, body, "", exitHint)
 	return clipToViewport(combined, m.width, m.height)
 }
 
@@ -217,17 +217,13 @@ func (m Model) renderHeader() string {
 	}
 
 	left := title + "  " + m.styles.label.Render("state: ") + stateStyle.Render(stateText)
-	right := m.styles.dim.Render("utc " + m.now.Format("2006-01-02 15:04:05"))
-	line1 := joinWithPadding(left, right, m.width)
-
-	line2Parts := []string{
-		m.styles.dim.Render("interval " + m.interval.String()),
-	}
 	if !m.nextFetchAt.IsZero() {
-		line2Parts = append(line2Parts, m.styles.dim.Render("next refresh in "+humanDuration(m.nextFetchAt.Sub(m.now))))
+		refreshText := "[next refresh in " + humanDuration(m.nextFetchAt.Sub(m.now)) + "]"
+		left += " " + m.styles.dim.Render(refreshText)
 	}
-	line2 := strings.Join(line2Parts, "  ")
-	return line1 + "\n" + truncateRunes(line2, m.width)
+	right := m.styles.dim.Render("utc " + m.now.Format("2006-01-02 15:04:05"))
+	line1 := joinWithPaddingKeepRight(left, right, m.width)
+	return line1
 }
 
 func (m Model) renderBody() string {
@@ -245,12 +241,14 @@ func (m Model) renderBody() string {
 
 	var windowsBlock string
 	if contentWidth >= 94 {
-		panelWidth := (contentWidth - 1) / 2
+		panelOverhead := horizontalOverhead(m.styles.panel)
+		panelWidth, spacerWidth := splitEqualPanelContentWidths(contentWidth, panelOverhead)
+		spacer := strings.Repeat(" ", spacerWidth)
 		leftPanelWidth = panelWidth
 		rightPanelWidth = panelWidth
 		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
 		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
-		windowsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, " ", rightPanel)
+		windowsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, spacer, rightPanel)
 	} else {
 		leftPanel := m.renderWindowPanel("five-hour window", m.summary.PrimaryWindow, leftPanelWidth)
 		rightPanel := m.renderWindowPanel("weekly window", m.summary.SecondaryWindow, rightPanelWidth)
@@ -258,25 +256,15 @@ func (m Model) renderBody() string {
 	}
 
 	metaLines := []string{}
-	if !m.lastSuccessAt.IsZero() {
-		metaLines = append(metaLines, m.styles.label.Render("updated: ")+m.styles.value.Render(humanDuration(m.now.Sub(m.lastSuccessAt))+" ago"))
-	}
 	if m.summary.TotalAccounts > 0 {
 		metaLines = append(metaLines, m.styles.label.Render("accounts: ")+m.styles.value.Render(fmt.Sprintf("%d detected, %d reachable", m.summary.TotalAccounts, m.summary.SuccessfulAccounts)))
 	}
-	if m.summary.WindowAccountLabel != "" {
-		metaLines = append(metaLines, m.styles.label.Render("window cards account: ")+m.styles.value.Render(m.summary.WindowAccountLabel))
+	if m.summary.AccountEmail != "" {
+		metaLines = append(metaLines, m.styles.label.Render("current account: ")+m.styles.value.Render(m.summary.AccountEmail))
 	}
 	if m.summary.ObservedTokensStatus != "" {
-		metaLines = append(metaLines, m.styles.label.Render("token estimate: ")+m.styles.value.Render(m.summary.ObservedTokensStatus))
 		metaLines = append(metaLines, m.styles.label.Render("five-hour tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindow5h, m.summary.ObservedTokens5h)))
-		if split := formatObservedWindowSplit(m.summary.ObservedWindow5h); split != "" {
-			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
-		}
 		metaLines = append(metaLines, m.styles.label.Render("weekly tokens (sum across accounts): ")+m.styles.value.Render(formatObservedWindowCompact(m.summary.ObservedWindowWeekly, m.summary.ObservedTokensWeekly)))
-		if split := formatObservedWindowSplit(m.summary.ObservedWindowWeekly); split != "" {
-			metaLines = append(metaLines, m.styles.dim.Render("  split: ")+m.styles.value.Render(split))
-		}
 	}
 	if len(m.summary.Warnings) > 0 {
 		for _, w := range m.summary.Warnings {
@@ -291,12 +279,10 @@ func (m Model) renderBody() string {
 	}
 
 	metaPanel := m.styles.panel.Width(contentWidth).Render(strings.Join(metaLines, "\n"))
-	return lipgloss.JoinVertical(lipgloss.Left, windowsBlock, "", metaPanel)
+	return lipgloss.JoinVertical(lipgloss.Left, windowsBlock, metaPanel)
 }
 
 func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth int) string {
-	barWidth := max(10, min(40, maxWidth-26))
-	bar := percentBar(win.UsedPercent, barWidth)
 	statusStyle := percentStyle(win.UsedPercent, m.styles)
 
 	reset := "unknown"
@@ -315,7 +301,6 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 	lines := []string{
 		m.styles.accent.Render(title),
 		m.styles.label.Render("used: ") + statusStyle.Render(fmt.Sprintf("%d%%", win.UsedPercent)),
-		m.styles.mono.Render(bar),
 		m.styles.label.Render("resets at: ") + m.styles.value.Render(reset),
 		m.styles.label.Render("resets in: ") + m.styles.value.Render(remaining),
 	}
@@ -361,24 +346,6 @@ func formatObservedWindowCompact(win *usage.ObservedTokenBreakdown, fallbackTota
 		return compactCount(*fallbackTotal)
 	}
 	return compactCount(win.Total)
-}
-
-func formatObservedWindowSplit(win *usage.ObservedTokenBreakdown) string {
-	if win == nil || !win.HasSplit {
-		return ""
-	}
-	parts := []string{
-		"input " + compactCount(win.Input),
-		"cached input " + compactCount(win.CachedInput),
-		"output " + compactCount(win.Output),
-	}
-	if win.ReasoningOutput > 0 {
-		parts = append(parts, "reasoning "+compactCount(win.ReasoningOutput))
-	}
-	if win.HasCachedOutput && win.CachedOutput > 0 {
-		parts = append(parts, "cached output "+compactCount(win.CachedOutput))
-	}
-	return strings.Join(parts, " | ")
 }
 
 func compactCount(v int64) string {
@@ -448,6 +415,27 @@ func joinWithPadding(left, right string, width int) string {
 	return left + strings.Repeat(" ", padding) + right
 }
 
+func joinWithPaddingKeepRight(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rightWidth := lipgloss.Width(right)
+	if rightWidth >= width {
+		return truncateRunes(right, width)
+	}
+	maxLeftWidth := width - rightWidth - 1
+	if maxLeftWidth < 0 {
+		maxLeftWidth = 0
+	}
+	left = truncateRunes(left, maxLeftWidth)
+	leftWidth := lipgloss.Width(left)
+	padding := width - leftWidth - rightWidth
+	if padding < 1 {
+		padding = 1
+	}
+	return left + strings.Repeat(" ", padding) + right
+}
+
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -508,4 +496,36 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func splitEqualPanelContentWidths(contentWidth, panelOverhead int) (panelWidth int, spacerWidth int) {
+	if contentWidth <= 0 {
+		return 0, 0
+	}
+	// Keep panel content widths equal while ensuring:
+	// 2*(panel content + panel overhead) + spacer == bottom panel outer width.
+	usable := contentWidth - panelOverhead
+	if usable < 3 {
+		return 1, 1
+	}
+	if usable%2 == 0 {
+		spacerWidth = 2
+	} else {
+		spacerWidth = 1
+	}
+	panelWidth = (usable - spacerWidth) / 2
+	if panelWidth < 1 {
+		panelWidth = 1
+	}
+	return panelWidth, spacerWidth
+}
+
+func horizontalOverhead(style lipgloss.Style) int {
+	// Probe with a stable non-trivial width to avoid edge-case minimum sizing.
+	const probeWidth = 40
+	overhead := lipgloss.Width(style.Width(probeWidth).Render("")) - probeWidth
+	if overhead < 0 {
+		return 0
+	}
+	return overhead
 }

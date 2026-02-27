@@ -242,7 +242,7 @@ func newAccountCollector() *accountCollector {
 }
 
 func (c *accountCollector) add(label, codexHome string, priority int, allowWithoutSignals bool) {
-	normalized := filepath.Clean(strings.TrimSpace(codexHome))
+	normalized := normalizeHome(codexHome)
 	if normalized == "" {
 		return
 	}

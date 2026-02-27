@@ -152,20 +152,20 @@ Enforcement:
 - Mark overall estimate status as `partial` when one or more accounts are unavailable.
 - Keep showing aggregate totals from available accounts when one account is unavailable.
 - Present one aggregate observed-token total across accounts in UI output.
-- Deduplicate duplicate account identities using normalized email keys and max-observed merge before aggregate summation.
+- Deduplicate duplicate account identities using identity precedence (`email`, then `account_id`, then `user_id`, then normalized home path) and max-observed merge before aggregate summation.
 - Keep duplicate-identity deduplication silent in TUI output to avoid unnecessary operator noise.
 
 Decision:
-Top-level window cards should prioritize risk visibility in multi-account mode.
+Top-level window cards should follow the active account in multi-account mode.
 Context:
 There is no single authoritative aggregate quota percentage across independent accounts.
 Rationale:
-Showing the highest-pressure account in the top cards gives a conservative at-a-glance signal while detailed rows remain per-account.
+Users expect top cards to match the currently signed-in Codex account, especially when swapping accounts mid-session.
 Trade-offs:
-Top cards are not an aggregate; users should treat them as the highest-pressure account view.
+If active account fetch fails, cards fall back to the highest-pressure reachable account so the monitor still shows useful limits.
 Enforcement:
-- In multi-account mode, top 5-hour and weekly cards are sourced from the account with highest weekly usage (then highest 5-hour usage as tie-break).
-- Expose which account the window cards are sourced from.
+- In multi-account mode, top 5-hour and weekly cards are sourced from the active account home when available.
+- If active account data is unavailable, fall back to the highest-pressure reachable account (weekly usage, then five-hour usage, then recency).
 
 Decision:
 Ship a doctor command.

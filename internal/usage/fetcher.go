@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type accountFetcher struct {
 }
 
 type accountFetchResult struct {
+	codexHome           string
 	account             AccountSummary
 	snapshot            *Summary
 	fetchErr            error
@@ -82,8 +84,6 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	f.refreshAccounts(now, false)
 
 	out := &Summary{
-		TotalAccounts:        len(f.accounts),
-		SuccessfulAccounts:   0,
 		ObservedTokensStatus: observedTokensStatusUnavailable,
 		FetchedAt:            now,
 	}
@@ -98,23 +98,38 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 	anyAccountSuccess := false
 	anyObservedAvailable := false
 	unavailableObservedCount := 0
-	var observedAnon observedWindowPair
+	totalAccountIdentities := map[string]struct{}{}
+	successfulAccountIdentities := map[string]struct{}{}
 	seenObservedByIdentity := map[string]observedWindowPair{}
+	accountByIdentity := map[string]accountSummaryWithHome{}
+	activeHome := resolveActiveCodexHome()
+	var activeSuccess *Summary
+	activeLabel := ""
 
 	results := f.fetchAccountsConcurrent(ctx, now)
 	for _, result := range results {
 		accountOut := result.account
+		accountIdentity := accountIdentityOrHomeKey(accountOut, result.codexHome)
+		if accountIdentity != "" {
+			totalAccountIdentities[accountIdentity] = struct{}{}
+		}
 		if result.fetchErr != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("account %q fetch failed: %v", accountOut.Label, result.fetchErr))
 		} else if result.snapshot != nil {
-			out.SuccessfulAccounts++
 			anyAccountSuccess = true
+			if accountIdentity != "" {
+				successfulAccountIdentities[accountIdentity] = struct{}{}
+			}
 			if accountOut.PlanType != "" {
 				planTypes[accountOut.PlanType] = struct{}{}
 			}
 			if shouldSelectSummary(selectedSuccess, result.snapshot) {
 				selectedSuccess = result.snapshot
 				selectedLabel = accountOut.Label
+			}
+			if activeHome != "" && normalizeHome(result.codexHome) == activeHome {
+				activeSuccess = result.snapshot
+				activeLabel = accountOut.Label
 			}
 		}
 		if result.observedAvailable {
@@ -127,40 +142,57 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 				pair.WindowWeekly = *accountOut.ObservedWindowWeekly
 			}
 
-			identity := identityKey(accountOut.AccountID, accountOut.UserID, accountOut.AccountEmail)
+			identity := accountIdentityOrHomeKey(accountOut, result.codexHome)
 			if identity == "" {
-				observedAnon = addObservedPairs(observedAnon, pair)
-			} else {
-				prev := seenObservedByIdentity[identity]
-				next := mergeObservedPairMax(prev, pair)
-				seenObservedByIdentity[identity] = next
+				identity = "label:" + strings.TrimSpace(accountOut.Label)
 			}
+			prev := seenObservedByIdentity[identity]
+			next := mergeObservedPairMax(prev, pair)
+			seenObservedByIdentity[identity] = next
 		}
 		if result.observedUnavailable {
 			unavailableObservedCount++
 		}
 		out.Warnings = append(out.Warnings, result.warnings...)
-		out.Accounts = append(out.Accounts, accountOut)
+		existing, ok := accountByIdentity[accountIdentity]
+		if !ok || shouldPreferAccountSummary(existing, accountOut, result.codexHome, activeHome) {
+			accountByIdentity[accountIdentity] = accountSummaryWithHome{
+				account:   accountOut,
+				codexHome: result.codexHome,
+			}
+		}
 	}
+	out.Accounts = accountSummariesFromIdentityMap(accountByIdentity)
+	out.TotalAccounts = len(totalAccountIdentities)
+	out.SuccessfulAccounts = len(successfulAccountIdentities)
 
 	if selectedSuccess != nil {
-		out.Source = selectedSuccess.Source
+		windowSource := selectedSuccess
+		windowLabel := selectedLabel
+		if activeSuccess != nil {
+			windowSource = activeSuccess
+			if activeLabel != "" {
+				windowLabel = activeLabel
+			}
+		}
+
+		out.Source = windowSource.Source
 		out.PlanType = selectedSuccess.PlanType
 		if len(planTypes) > 1 {
 			out.PlanType = "mixed"
 		}
-		out.AccountEmail = selectedSuccess.AccountEmail
-		out.AccountID = selectedSuccess.AccountID
-		out.UserID = selectedSuccess.UserID
-		out.PrimaryWindow = selectedSuccess.PrimaryWindow
-		out.SecondaryWindow = selectedSuccess.SecondaryWindow
-		out.WindowAccountLabel = selectedLabel
-		out.AdditionalLimitCount = selectedSuccess.AdditionalLimitCount
-		out.FetchedAt = selectedSuccess.FetchedAt
+		out.AccountEmail = windowSource.AccountEmail
+		out.AccountID = windowSource.AccountID
+		out.UserID = windowSource.UserID
+		out.PrimaryWindow = windowSource.PrimaryWindow
+		out.SecondaryWindow = windowSource.SecondaryWindow
+		out.WindowAccountLabel = windowLabel
+		out.AdditionalLimitCount = windowSource.AdditionalLimitCount
+		out.FetchedAt = windowSource.FetchedAt
 	}
 
 	if anyObservedAvailable {
-		observedTotal := observedAnon
+		observedTotal := observedWindowPair{}
 		for _, pair := range seenObservedByIdentity {
 			observedTotal = addObservedPairs(observedTotal, pair)
 		}
@@ -348,20 +380,92 @@ func normalizeHome(home string) string {
 	if trimmed == "" {
 		return ""
 	}
-	return filepath.Clean(trimmed)
+	normalized := filepath.Clean(trimmed)
+	if abs, err := filepath.Abs(normalized); err == nil {
+		normalized = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(normalized); err == nil && strings.TrimSpace(resolved) != "" {
+		normalized = resolved
+	}
+	return filepath.Clean(normalized)
 }
 
-func identityKey(accountID, userID, email string) string {
-	if v := strings.TrimSpace(accountID); v != "" {
-		return "account:" + strings.ToLower(v)
+func resolveActiveCodexHome() string {
+	home, err := defaultCodexHome()
+	if err != nil {
+		return ""
 	}
-	if v := strings.TrimSpace(userID); v != "" {
-		return "user:" + strings.ToLower(v)
-	}
+	return normalizeHome(home)
+}
+
+func identityKey(email, accountID, userID string) string {
 	if v := strings.TrimSpace(email); v != "" {
 		return "email:" + strings.ToLower(v)
 	}
+	if v := strings.TrimSpace(accountID); v != "" {
+		return "account_id:" + strings.ToLower(v)
+	}
+	if v := strings.TrimSpace(userID); v != "" {
+		return "user_id:" + strings.ToLower(v)
+	}
 	return ""
+}
+
+func accountIdentityOrHomeKey(account AccountSummary, codexHome string) string {
+	if identity := identityKey(account.AccountEmail, account.AccountID, account.UserID); identity != "" {
+		return identity
+	}
+	if home := normalizeHome(codexHome); home != "" {
+		return "home:" + home
+	}
+	return ""
+}
+
+type accountSummaryWithHome struct {
+	account   AccountSummary
+	codexHome string
+}
+
+func shouldPreferAccountSummary(existing accountSummaryWithHome, candidate AccountSummary, candidateHome, activeHome string) bool {
+	existingOK := strings.TrimSpace(existing.account.Error) == ""
+	candidateOK := strings.TrimSpace(candidate.Error) == ""
+	if existingOK != candidateOK {
+		return candidateOK
+	}
+
+	existingActive := activeHome != "" && normalizeHome(existing.codexHome) == activeHome
+	candidateActive := activeHome != "" && normalizeHome(candidateHome) == activeHome
+	if existingActive != candidateActive {
+		return candidateActive
+	}
+
+	if existing.account.FetchedAt == nil {
+		return candidate.FetchedAt != nil
+	}
+	if candidate.FetchedAt == nil {
+		return false
+	}
+	return candidate.FetchedAt.After(*existing.account.FetchedAt)
+}
+
+func accountSummariesFromIdentityMap(byIdentity map[string]accountSummaryWithHome) []AccountSummary {
+	if len(byIdentity) == 0 {
+		return nil
+	}
+	accounts := make([]AccountSummary, 0, len(byIdentity))
+	for _, row := range byIdentity {
+		accounts = append(accounts, row.account)
+	}
+	sort.Slice(accounts, func(i, j int) bool {
+		if accounts[i].Label != accounts[j].Label {
+			return accounts[i].Label < accounts[j].Label
+		}
+		if accounts[i].AccountEmail != accounts[j].AccountEmail {
+			return accounts[i].AccountEmail < accounts[j].AccountEmail
+		}
+		return accounts[i].Source < accounts[j].Source
+	})
+	return accounts
 }
 
 func addObservedPairs(a, b observedWindowPair) observedWindowPair {
@@ -429,6 +533,7 @@ func (f *Fetcher) fetchAccountsConcurrent(ctx context.Context, now time.Time) []
 
 func (f *Fetcher) fetchAccountResult(ctx context.Context, account accountFetcher, now time.Time) accountFetchResult {
 	result := accountFetchResult{
+		codexHome: account.account.CodexHome,
 		account: AccountSummary{
 			Label: account.account.Label,
 		},
