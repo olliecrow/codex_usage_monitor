@@ -42,3 +42,8 @@
 - Keep implementation simple, robust, and performant.
 - Support one UI mode only.
 - Multi-account support is optional and only if the data source supports it cleanly.
+
+## Dictation-Aware Input Handling
+- The user often dictates prompts, so minor transcription errors and homophone substitutions are expected.
+- Infer intent from local context and repository state; ask a concise clarification only when ambiguity changes execution risk.
+- Keep explicit typo dictionaries at workspace level (do not duplicate repo-local typo maps).
