@@ -137,3 +137,10 @@ You can override the file path with `CODEX_USAGE_MONITOR_ACCOUNTS_FILE`.
 - Observed tokens are summed across detected accounts for the five-hour and weekly windows.
 - Duplicate account identities are merged internally during token aggregation and this is not surfaced as a UI warning.
 - `/status` text parsing is intentionally not used.
+
+<!-- third-party-policy:start -->
+## Third-Party Code Policy
+This repository allows external-code snapshots for static analysis only. External clones must stay in ephemeral `plan/` locations, be sanitized immediately (`rm -rf .git`, or remove all remotes first if `.git` is temporarily retained), and must never be executed.
+
+See `docs/untrusted-third-party-repos.md`.
+<!-- third-party-policy:end -->
