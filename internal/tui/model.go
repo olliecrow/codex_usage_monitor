@@ -311,7 +311,7 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 		lines := []string{
 			m.styles.accent.Render(title),
 			m.styles.label.Render("used: ") + m.styles.bad.Render("unavailable"),
-			m.renderResetLine("unavailable", "unavailable", maxWidth),
+			m.renderResetLine("unavailable", "unavailable"),
 		}
 		for i := range lines {
 			lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
@@ -337,7 +337,7 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 	lines := []string{
 		m.styles.accent.Render(title),
 		m.styles.label.Render("used: ") + statusStyle.Render(fmt.Sprintf("%d%%", win.UsedPercent)),
-		m.renderResetLine(reset, remaining, maxWidth),
+		m.renderResetLine(reset, remaining),
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
@@ -345,11 +345,10 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 	return m.styles.panel.Width(max(20, maxWidth)).Render(strings.Join(lines, "\n"))
 }
 
-func (m Model) renderResetLine(reset, remaining string, maxWidth int) string {
-	line := m.styles.label.Render("resets at: ") +
+func (m Model) renderResetLine(reset, remaining string) string {
+	return m.styles.label.Render("resets at: ") +
 		m.styles.value.Render(reset) +
 		m.styles.dim.Render(" ["+remaining+"]")
-	return ansi.Truncate(line, max(4, maxWidth), "...")
 }
 
 func (m Model) renderAccountsLine(maxWidth int) string {

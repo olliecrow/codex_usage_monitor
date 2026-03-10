@@ -143,9 +143,9 @@ Interpretation:
 - PTY parsing is fragile to text/layout changes.
 
 ### Multi-account note
-- Current Codex local auth flow appears single-account by default.
-- A future multi-account mode can be added by reading multiple explicit auth stores, but this should be an explicit feature and not assumed.
-- Suggested behavior: single account only, with clear architecture hooks for later multi-account support.
+- Current Codex local auth flow still centers on one active account home at a time.
+- This repo now implements explicit multi-account support by discovering or configuring multiple Codex homes, while keeping top window cards bound to the active account home.
+- Aggregate observed-token totals can span multiple detected accounts, but quota-window cards should never imply a synthetic combined quota percentage across independent accounts.
 
 ### Proposed architecture (simple and robust)
 1. `source/appserver`: long-lived Codex app-server client.
@@ -157,5 +157,5 @@ Interpretation:
 ## Implemented defaults after decisions
 - refresh cadence: 15 seconds default
 - time display: absolute reset time plus countdown
-- account scope: one active account
+- account scope: multi-account discovery with one active-account window row and optional additional per-account rows when viewport space allows
 - per-model extra limits: not shown as primary cards, counted in metadata
