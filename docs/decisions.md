@@ -165,6 +165,8 @@ Trade-offs:
 If active account fetch fails or is missing from discovered accounts, window cards are unavailable until active-account data is reachable.
 Enforcement:
 - In multi-account mode, top 5-hour and weekly cards are sourced from the active account home when available.
+- When more than one distinct account row is available, render one additional 5-hour/weekly card row per non-active account between the active row and the aggregate bottom panel.
+- When only one distinct account row is available, keep the existing single top-row layout.
 - If active account data is unavailable, do not fall back to another account's quota windows.
 - Surface explicit warnings and show window cards as unavailable.
 
@@ -240,7 +242,7 @@ Enforcement:
 - TUI refreshes on interval only.
 - Exit flow uses `Ctrl+C`.
 - TUI bottom panel shows aggregate token totals and split category bullets for five-hour and weekly windows.
-- UI labels use `resets in` for countdown clarity.
+- Window cards show reset timing on one compact line: `resets at: <timestamp> [<remaining>]`.
 
 Decision:
 TUI status surfaces must be explicit, fixed-layout, and startup-clear.

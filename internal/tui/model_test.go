@@ -43,6 +43,36 @@ func TestViewFitsViewportAcrossSizes(t *testing.T) {
 	}
 }
 
+func TestMultiAccountViewFitsViewportAcrossSizes(t *testing.T) {
+	sizes := []struct {
+		width  int
+		height int
+	}{
+		{60, 18},
+		{80, 24},
+		{100, 28},
+		{140, 40},
+	}
+
+	for _, s := range sizes {
+		t.Run(strconv.Itoa(s.width)+"x"+strconv.Itoa(s.height), func(t *testing.T) {
+			m := seededMultiAccountModel()
+			m.width = s.width
+			m.height = s.height
+			out := m.View()
+			lines := strings.Split(out, "\n")
+			if len(lines) != s.height {
+				t.Fatalf("expected %d lines, got %d", s.height, len(lines))
+			}
+			for i, line := range lines {
+				if lipgloss.Width(line) > s.width {
+					t.Fatalf("line %d exceeded width: got %d max %d", i+1, lipgloss.Width(line), s.width)
+				}
+			}
+		})
+	}
+}
+
 func TestNarrowViewStillRendersCoreFields(t *testing.T) {
 	m := seededModel()
 	m.width = 42
@@ -132,6 +162,46 @@ func TestWindowPanelsShowUnavailableWhenActiveWindowDataMissing(t *testing.T) {
 	}
 }
 
+func TestSingleAccountViewDoesNotRenderExtraAccountWindowRows(t *testing.T) {
+	m := seededModel()
+	m.width = 120
+	m.height = 30
+	now := m.now
+	m.summary.TotalAccounts = 1
+	m.summary.Accounts = []usage.AccountSummary{
+		{
+			Label:        "me",
+			AccountEmail: "me@example.com",
+			FetchedAt:    &now,
+		},
+	}
+
+	out := m.View()
+	if strings.Count(out, "five-hour window [") != 1 {
+		t.Fatalf("expected one five-hour window row, got:\n%s", out)
+	}
+	if strings.Count(out, "weekly window [") != 1 {
+		t.Fatalf("expected one weekly window row, got:\n%s", out)
+	}
+}
+
+func TestMultiAccountViewRendersOneWindowRowPerAccount(t *testing.T) {
+	m := seededMultiAccountModel()
+	m.width = 120
+	m.height = 40
+
+	out := m.View()
+	if strings.Count(out, "five-hour window [") != 3 {
+		t.Fatalf("expected one five-hour row per account, got:\n%s", out)
+	}
+	if strings.Count(out, "weekly window [") != 3 {
+		t.Fatalf("expected one weekly row per account, got:\n%s", out)
+	}
+	if strings.Index(out, "five-hour window [me@example.com]") >= strings.Index(out, "five-hour window [alpha@example.com]") {
+		t.Fatalf("expected active account row to stay above additional account rows")
+	}
+}
+
 func TestAccountsLineShowsDetectedAndIdentifiers(t *testing.T) {
 	m := seededModel()
 	m.width = 140
@@ -151,19 +221,17 @@ func TestAccountsLineShowsDetectedAndIdentifiers(t *testing.T) {
 
 func TestAccountsLineTruncatesWithDots(t *testing.T) {
 	m := seededModel()
-	m.width = 64
-	m.height = 20
 	m.summary.TotalAccounts = 2
 	m.summary.Accounts = []usage.AccountSummary{
 		{AccountEmail: "very.long.first.account@example.com"},
 		{AccountEmail: "very.long.second.account@example.com"},
 	}
 
-	out := m.View()
-	if !strings.Contains(out, "accounts: ") {
-		t.Fatalf("expected accounts line in output")
+	line := m.renderAccountsLine(40)
+	if !strings.Contains(line, "accounts: ") {
+		t.Fatalf("expected accounts line")
 	}
-	if !strings.Contains(out, "...") {
+	if !strings.Contains(line, "...") {
 		t.Fatalf("expected accounts line truncation with three dots")
 	}
 }
@@ -271,13 +339,16 @@ func TestHeaderShowsCtrlCOnly(t *testing.T) {
 	}
 }
 
-func TestWindowPanelUsesResetsInLabel(t *testing.T) {
+func TestWindowPanelCompactsResetLineIntoBracketedCountdown(t *testing.T) {
 	m := seededModel()
 	m.width = 100
 	m.height = 20
 	out := m.renderBody()
-	if !strings.Contains(out, "resets in:") {
-		t.Fatalf("expected resets in label in window panels")
+	if !strings.Contains(out, "resets at: 2026-02-26 16:30:00 UTC [1h30m]") {
+		t.Fatalf("expected compact reset line in window panel")
+	}
+	if strings.Contains(out, "resets in:") {
+		t.Fatalf("did not expect separate resets in row in window panels")
 	}
 }
 
@@ -457,6 +528,62 @@ func seededModel() Model {
 			SecondsUntilReset: &sec2,
 		},
 		FetchedAt: now.Add(-2 * time.Second),
+	}
+	return m
+}
+
+func seededMultiAccountModel() Model {
+	m := seededModel()
+	now := m.now.Add(-2 * time.Second)
+	alphaReset1 := m.now.Add(2 * time.Hour)
+	alphaReset2 := m.now.Add(5 * 24 * time.Hour)
+	alphaSec1 := int64(2 * 60 * 60)
+	alphaSec2 := int64(5 * 24 * 60 * 60)
+	bravoReset1 := m.now.Add(30 * time.Minute)
+	bravoReset2 := m.now.Add(3 * 24 * time.Hour)
+	bravoSec1 := int64(30 * 60)
+	bravoSec2 := int64(3 * 24 * 60 * 60)
+
+	m.summary.TotalAccounts = 3
+	m.summary.WindowAccountLabel = "me"
+	m.summary.Accounts = []usage.AccountSummary{
+		{
+			Label:        "alpha",
+			AccountEmail: "alpha@example.com",
+			PrimaryWindow: usage.WindowSummary{
+				UsedPercent:       12,
+				ResetsAt:          &alphaReset1,
+				SecondsUntilReset: &alphaSec1,
+			},
+			SecondaryWindow: usage.WindowSummary{
+				UsedPercent:       28,
+				ResetsAt:          &alphaReset2,
+				SecondsUntilReset: &alphaSec2,
+			},
+			FetchedAt: &now,
+		},
+		{
+			Label:        "bravo",
+			AccountEmail: "bravo@example.com",
+			PrimaryWindow: usage.WindowSummary{
+				UsedPercent:       77,
+				ResetsAt:          &bravoReset1,
+				SecondsUntilReset: &bravoSec1,
+			},
+			SecondaryWindow: usage.WindowSummary{
+				UsedPercent:       84,
+				ResetsAt:          &bravoReset2,
+				SecondsUntilReset: &bravoSec2,
+			},
+			FetchedAt: &now,
+		},
+		{
+			Label:           "me",
+			AccountEmail:    "me@example.com",
+			PrimaryWindow:   m.summary.PrimaryWindow,
+			SecondaryWindow: m.summary.SecondaryWindow,
+			FetchedAt:       &now,
+		},
 	}
 	return m
 }

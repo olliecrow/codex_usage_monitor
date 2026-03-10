@@ -236,10 +236,6 @@ func (m Model) renderBody() string {
 	}
 
 	contentWidth := max(20, m.width-4)
-	leftPanelWidth := contentWidth
-	rightPanelWidth := contentWidth
-
-	var windowsBlock string
 	fiveHourTitle := "five-hour window"
 	weeklyTitle := "weekly window"
 	if m.summary.AccountEmail != "" {
@@ -249,20 +245,23 @@ func (m Model) renderBody() string {
 		fiveHourTitle += " [unavailable]"
 		weeklyTitle += " [unavailable]"
 	}
-	if contentWidth >= 94 {
-		panelOverhead := horizontalOverhead(m.styles.panel)
-		panelWidth, spacerWidth := splitEqualPanelContentWidths(contentWidth, panelOverhead)
-		spacer := strings.Repeat(" ", spacerWidth)
-		leftPanelWidth = panelWidth
-		rightPanelWidth = panelWidth
-		leftPanel := m.renderWindowPanel(fiveHourTitle, m.summary.PrimaryWindow, leftPanelWidth, m.summary.WindowDataAvailable)
-		rightPanel := m.renderWindowPanel(weeklyTitle, m.summary.SecondaryWindow, rightPanelWidth, m.summary.WindowDataAvailable)
-		windowsBlock = lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, spacer, rightPanel)
-	} else {
-		leftPanel := m.renderWindowPanel(fiveHourTitle, m.summary.PrimaryWindow, leftPanelWidth, m.summary.WindowDataAvailable)
-		rightPanel := m.renderWindowPanel(weeklyTitle, m.summary.SecondaryWindow, rightPanelWidth, m.summary.WindowDataAvailable)
-		windowsBlock = lipgloss.JoinVertical(lipgloss.Left, leftPanel, "", rightPanel)
+
+	windowRows := []string{
+		m.renderWindowRow(
+			contentWidth,
+			windowPanelSpec{title: fiveHourTitle, window: m.summary.PrimaryWindow, available: m.summary.WindowDataAvailable},
+			windowPanelSpec{title: weeklyTitle, window: m.summary.SecondaryWindow, available: m.summary.WindowDataAvailable},
+		),
 	}
+	for _, account := range m.additionalAccountWindowRows() {
+		available := accountWindowAvailable(account)
+		windowRows = append(windowRows, m.renderWindowRow(
+			contentWidth,
+			windowPanelSpec{title: windowPanelTitle("five-hour window", account), window: account.PrimaryWindow, available: available},
+			windowPanelSpec{title: windowPanelTitle("weekly window", account), window: account.SecondaryWindow, available: available},
+		))
+	}
+	windowsBlock := lipgloss.JoinVertical(lipgloss.Left, windowRows...)
 
 	metaLines := []string{}
 	maxMetaWidth := max(8, contentWidth-4)
@@ -288,13 +287,30 @@ func (m Model) renderBody() string {
 	return lipgloss.JoinVertical(lipgloss.Left, windowsBlock, metaPanel)
 }
 
+func (m Model) renderWindowRow(contentWidth int, left, right windowPanelSpec) string {
+	leftPanelWidth := contentWidth
+	rightPanelWidth := contentWidth
+	if contentWidth >= 94 {
+		panelOverhead := horizontalOverhead(m.styles.panel)
+		panelWidth, spacerWidth := splitEqualPanelContentWidths(contentWidth, panelOverhead)
+		spacer := strings.Repeat(" ", spacerWidth)
+		leftPanelWidth = panelWidth
+		rightPanelWidth = panelWidth
+		leftPanel := m.renderWindowPanel(left.title, left.window, leftPanelWidth, left.available)
+		rightPanel := m.renderWindowPanel(right.title, right.window, rightPanelWidth, right.available)
+		return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, spacer, rightPanel)
+	}
+	leftPanel := m.renderWindowPanel(left.title, left.window, leftPanelWidth, left.available)
+	rightPanel := m.renderWindowPanel(right.title, right.window, rightPanelWidth, right.available)
+	return lipgloss.JoinVertical(lipgloss.Left, leftPanel, "", rightPanel)
+}
+
 func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth int, available bool) string {
 	if !available {
 		lines := []string{
 			m.styles.accent.Render(title),
 			m.styles.label.Render("used: ") + m.styles.bad.Render("unavailable"),
-			m.styles.label.Render("resets at: ") + m.styles.value.Render("unavailable"),
-			m.styles.label.Render("resets in: ") + m.styles.value.Render("unavailable"),
+			m.renderResetLine("unavailable", "unavailable", maxWidth),
 		}
 		for i := range lines {
 			lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
@@ -320,13 +336,19 @@ func (m Model) renderWindowPanel(title string, win usage.WindowSummary, maxWidth
 	lines := []string{
 		m.styles.accent.Render(title),
 		m.styles.label.Render("used: ") + statusStyle.Render(fmt.Sprintf("%d%%", win.UsedPercent)),
-		m.styles.label.Render("resets at: ") + m.styles.value.Render(reset),
-		m.styles.label.Render("resets in: ") + m.styles.value.Render(remaining),
+		m.renderResetLine(reset, remaining, maxWidth),
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], max(4, maxWidth), "...")
 	}
 	return m.styles.panel.Width(max(20, maxWidth)).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderResetLine(reset, remaining string, maxWidth int) string {
+	line := m.styles.label.Render("resets at: ") +
+		m.styles.value.Render(reset) +
+		m.styles.dim.Render(" ["+remaining+"]")
+	return ansi.Truncate(line, max(4, maxWidth), "...")
 }
 
 func (m Model) renderAccountsLine(maxWidth int) string {
@@ -401,6 +423,71 @@ func summarizeAccountIdentities(accounts []usage.AccountSummary) []string {
 	return out
 }
 
+func (m Model) additionalAccountWindowRows() []usage.AccountSummary {
+	if m.summary == nil || len(m.summary.Accounts) <= 1 {
+		return nil
+	}
+	activeIndex := activeAccountIndex(m.summary)
+	out := make([]usage.AccountSummary, 0, len(m.summary.Accounts)-1)
+	for i, account := range m.summary.Accounts {
+		if i == activeIndex {
+			continue
+		}
+		out = append(out, account)
+	}
+	return out
+}
+
+func activeAccountIndex(summary *usage.Summary) int {
+	if summary == nil || len(summary.Accounts) == 0 {
+		return -1
+	}
+	activeIdentity := accountIdentityKey(summary.AccountEmail, summary.AccountID, summary.UserID)
+	activeLabel := strings.TrimSpace(summary.WindowAccountLabel)
+	for i, account := range summary.Accounts {
+		if activeIdentity != "" && accountIdentityKey(account.AccountEmail, account.AccountID, account.UserID) == activeIdentity {
+			return i
+		}
+		if activeLabel != "" && strings.TrimSpace(account.Label) == activeLabel {
+			return i
+		}
+	}
+	return -1
+}
+
+func accountIdentityKey(email, accountID, userID string) string {
+	if trimmed := strings.ToLower(strings.TrimSpace(email)); trimmed != "" {
+		return "email:" + trimmed
+	}
+	if trimmed := strings.ToLower(strings.TrimSpace(accountID)); trimmed != "" {
+		return "account_id:" + trimmed
+	}
+	if trimmed := strings.ToLower(strings.TrimSpace(userID)); trimmed != "" {
+		return "user_id:" + trimmed
+	}
+	return ""
+}
+
+func accountWindowAvailable(account usage.AccountSummary) bool {
+	return strings.TrimSpace(account.Error) == "" && account.FetchedAt != nil
+}
+
+func windowPanelTitle(base string, account usage.AccountSummary) string {
+	if email := strings.TrimSpace(account.AccountEmail); email != "" {
+		return base + " [" + email + "]"
+	}
+	if label := strings.TrimSpace(account.Label); label != "" {
+		return base + " [" + label + "]"
+	}
+	if accountID := strings.TrimSpace(account.AccountID); accountID != "" {
+		return base + " [account_id:" + accountID + "]"
+	}
+	if userID := strings.TrimSpace(account.UserID); userID != "" {
+		return base + " [user_id:" + userID + "]"
+	}
+	return base
+}
+
 func (m Model) renderObservedBreakdownLinesFixed(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) []string {
 	total := "n/a"
 	input := "n/a"
@@ -434,6 +521,12 @@ type statusLine struct {
 	level string
 	name  string
 	value string
+}
+
+type windowPanelSpec struct {
+	title     string
+	window    usage.WindowSummary
+	available bool
 }
 
 func (m Model) renderStatusLinesFixed(rows int) []string {

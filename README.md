@@ -27,9 +27,11 @@ This project is focused on subscription usage only. It does not track API usage.
 - Falls back to OAuth usage endpoint if app-server is unavailable.
 - Estimates observed token usage totals for the last five hours and last week from local `token_count` events.
 - Shows observed token estimates aggregated across detected accounts (with duplicate-identity deduplication safeguards).
-- In multi-account mode, top window cards only follow the active Codex account. If active-account usage is unavailable, cards are shown as unavailable.
+- In single-account mode, the TUI keeps the same one-row window-card layout.
+- In multi-account mode, the top window-card row follows the active Codex account and additional per-account window-card rows are inserted above the aggregate bottom panel. If active-account usage is unavailable, the top row is shown as unavailable.
 - Deduplicates account identities with precedence: email, then account ID, then user ID. Accounts without any of these are merged into a single `unverified` identity bucket.
 - Shows aggregate token totals and split categories (total, input, input cached, output, output reasoning) in the bottom panel.
+- Compacts each window card reset line into `resets at: <timestamp> [<remaining>]` to save vertical space.
 - Keeps token-category rows structurally stable in the TUI by showing `n/a` placeholders when split fields are unavailable.
 - Shows bracketed token-state badges in header rows (`[loading]`, `[refreshing]`, `[ready]`, `[partial]`, `[unavailable]`) before `(sum across accounts)`.
 - Shows one compact accounts line in the bottom panel with detected count and bracketed identity list (emails/IDs), truncated to panel width when needed.
