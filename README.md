@@ -129,8 +129,6 @@ You can override the file path with `CODEX_USAGE_MONITOR_ACCOUNTS_FILE`.
 
 ## Notes
 
-- This project tracks subscription usage only, not API usage.
-- Observed token totals are estimates from local history files and may not include activity from other machines.
 - Observed-token estimate status is:
   - `estimated` when all configured accounts are readable
   - `partial` when one or more configured accounts are unavailable
