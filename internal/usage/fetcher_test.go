@@ -626,8 +626,8 @@ func TestFetcherMarksWindowUnavailableWhenActiveFetchFails(t *testing.T) {
 	if out.AccountEmail != "" {
 		t.Fatalf("expected no current account identity when active account failed, got %q", out.AccountEmail)
 	}
-	if out.WindowAccountLabel != "" {
-		t.Fatalf("expected no window account label when active account failed, got %q", out.WindowAccountLabel)
+	if out.WindowAccountLabel != "b" {
+		t.Fatalf("expected active account label to remain available when active account failed, got %q", out.WindowAccountLabel)
 	}
 	if !strings.Contains(strings.Join(out.Warnings, " | "), "window cards are unavailable") {
 		t.Fatalf("expected warning about unavailable window cards")

@@ -114,6 +114,7 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		totalAccountIdentities[accountIdentity] = struct{}{}
 		if activeHome != "" && normalizeHome(result.codexHome) == activeHome {
 			activeHomeDiscovered = true
+			activeLabel = accountOut.Label
 		}
 		if result.fetchErr != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("account %q fetch failed: %v", accountOut.Label, result.fetchErr))
@@ -176,6 +177,7 @@ func (f *Fetcher) fetchMultiAccount(ctx context.Context) (*Summary, error) {
 		out.FetchedAt = activeSuccess.FetchedAt
 	} else {
 		out.WindowDataAvailable = false
+		out.WindowAccountLabel = activeLabel
 		switch {
 		case activeHome == "":
 			out.Warnings = append(out.Warnings, "active account home is unavailable; window cards are unavailable")

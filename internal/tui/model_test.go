@@ -202,6 +202,23 @@ func TestMultiAccountViewRendersOneWindowRowPerAccount(t *testing.T) {
 	}
 }
 
+func TestMultiAccountViewDoesNotDuplicateFailedActiveAccountRow(t *testing.T) {
+	m := seededMultiAccountModel()
+	m.width = 120
+	m.height = 40
+	m.summary.WindowDataAvailable = false
+	m.summary.AccountEmail = ""
+	m.summary.WindowAccountLabel = "me"
+
+	out := m.View()
+	if strings.Count(out, "five-hour window [") != 3 {
+		t.Fatalf("expected unavailable active row plus two non-active rows, got:\n%s", out)
+	}
+	if strings.Contains(out, "five-hour window [me@example.com]") {
+		t.Fatalf("did not expect failed active account to also render as an extra per-account row")
+	}
+}
+
 func TestAccountsLineShowsDetectedAndIdentifiers(t *testing.T) {
 	m := seededModel()
 	m.width = 140
