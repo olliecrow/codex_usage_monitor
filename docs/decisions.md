@@ -167,6 +167,7 @@ Enforcement:
 - In multi-account mode, top 5-hour and weekly cards are sourced from the active account home when available.
 - When more than one distinct account row is available, render one additional 5-hour/weekly card row per non-active account between the active row and the aggregate bottom panel.
 - When only one distinct account row is available, keep the existing single top-row layout.
+- When viewport height is constrained, keep the aggregate bottom panel visible before rendering every additional non-active account row.
 - If active account data is unavailable, do not fall back to another account's quota windows.
 - Surface explicit warnings and show window cards as unavailable.
 

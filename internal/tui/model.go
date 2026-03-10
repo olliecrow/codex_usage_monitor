@@ -261,12 +261,13 @@ func (m Model) renderBody() string {
 			windowPanelSpec{title: windowPanelTitle("weekly window", account), window: account.SecondaryWindow, available: available},
 		))
 	}
+	panelVerticalOverhead := verticalOverhead(m.styles.panel)
+	windowRows = fitWindowRowsToViewport(windowRows, m.height, panelVerticalOverhead)
 	windowsBlock := lipgloss.JoinVertical(lipgloss.Left, windowRows...)
 
 	metaLines := []string{}
 	maxMetaWidth := max(8, contentWidth-4)
 	windowsHeight := lipgloss.Height(windowsBlock)
-	panelVerticalOverhead := verticalOverhead(m.styles.panel)
 	statusRows := statusRowsForLayout(m.height, windowsHeight, panelVerticalOverhead)
 	visibleStatusRows := min(4, statusRows)
 
@@ -486,6 +487,30 @@ func windowPanelTitle(base string, account usage.AccountSummary) string {
 		return base + " [user_id:" + userID + "]"
 	}
 	return base
+}
+
+func fitWindowRowsToViewport(rows []string, viewportHeight, panelVerticalOverhead int) []string {
+	if len(rows) <= 1 {
+		return rows
+	}
+	bodyTargetHeight := max(1, viewportHeight-3) // header + spacer + exit hint
+	minMetaHeight := panelVerticalOverhead + observedMetaBaseLineCount() + 1
+	usedHeight := 0
+	keep := 0
+	for i, row := range rows {
+		rowHeight := lipgloss.Height(row)
+		if i == 0 {
+			usedHeight += rowHeight
+			keep = 1
+			continue
+		}
+		if usedHeight+rowHeight+minMetaHeight > bodyTargetHeight {
+			break
+		}
+		usedHeight += rowHeight
+		keep++
+	}
+	return rows[:keep]
 }
 
 func (m Model) renderObservedBreakdownLinesFixed(win *usage.ObservedTokenBreakdown, fallbackTotal *int64) []string {

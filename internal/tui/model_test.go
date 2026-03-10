@@ -219,6 +219,23 @@ func TestMultiAccountViewDoesNotDuplicateFailedActiveAccountRow(t *testing.T) {
 	}
 }
 
+func TestMultiAccountShortViewportKeepsAggregatePanelVisible(t *testing.T) {
+	m := seededMultiAccountModel()
+	m.width = 120
+	m.height = 24
+
+	out := m.View()
+	if !strings.Contains(out, "accounts: 3 detected") {
+		t.Fatalf("expected aggregate bottom panel to remain visible, got:\n%s", out)
+	}
+	if !strings.Contains(out, "weekly tokens [") {
+		t.Fatalf("expected weekly aggregate section to remain visible, got:\n%s", out)
+	}
+	if strings.Contains(out, "five-hour window [bravo@example.com]") {
+		t.Fatalf("expected extra account rows to yield before the aggregate panel in a short viewport")
+	}
+}
+
 func TestAccountsLineShowsDetectedAndIdentifiers(t *testing.T) {
 	m := seededModel()
 	m.width = 140

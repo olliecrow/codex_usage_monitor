@@ -29,6 +29,7 @@ This project is focused on subscription usage only. It does not track API usage.
 - Shows observed token estimates aggregated across detected accounts (with duplicate-identity deduplication safeguards).
 - In single-account mode, the TUI keeps the same one-row window-card layout.
 - In multi-account mode, the top window-card row follows the active Codex account and additional per-account window-card rows are inserted above the aggregate bottom panel. If active-account usage is unavailable, the top row is shown as unavailable.
+- When height is constrained, extra per-account rows yield before the aggregate bottom panel so aggregate totals remain visible.
 - Deduplicates account identities with precedence: email, then account ID, then user ID. Accounts without any of these are merged into a single `unverified` identity bucket.
 - Shows aggregate token totals and split categories (total, input, input cached, output, output reasoning) in the bottom panel.
 - Compacts each window card reset line into `resets at: <timestamp> [<remaining>]` to save vertical space.
